@@ -1,5 +1,5 @@
 /*
- * qstat 2.5c
+ * qstat 2.6
  * by Steve Jankowski
  * steve@qstat.org
  * http://www.qstat.org
@@ -12,12 +12,19 @@
  *
  * Inspired by QuakePing by Len Norton
  *
- * Copyright 1996,1997,1998,1999,2000,2001,2002 by Steve Jankowski
+ * Copyright 1996,1997,1998,1999,2000,2001,2002,2003,2004 by Steve Jankowski
  *
  * Licensed under the Artistic License, see LICENSE.txt for license terms
  */
 
-#define VERSION "2.5c+cvs"
+#ifdef HAVE_CONFIG_H
+# include "gnuconfig.h"
+#else
+# ifndef VERSION
+#  define VERSION "2.7.1"
+# endif
+#endif
+
 char *qstat_version= VERSION;
 
 /* OS/2 defines */
@@ -63,36 +70,11 @@ extern int h_errno;
 #endif
 
 #define INVALID_SOCKET -1
-#define SOCKET_ERROR -1
 #ifndef INADDR_NONE
 #define INADDR_NONE ~0
 #endif
 #define sockerr()	errno
 #endif /* _ISUNIX */
-
-#ifdef _WIN32
-#ifndef FD_SETSIZE
-#define FD_SETSIZE 256
-#endif
-#include <winsock.h>
-#include <sys/timeb.h>
-#define close(a) closesocket(a)
-int gettimeofday(struct timeval *now, void *blah)
-{
-    struct timeb timeb;
-    ftime( &timeb);
-    now->tv_sec= timeb.time;
-    now->tv_usec= (unsigned int)timeb.millitm * 1000;
-    return 0;
-}
-#define sockerr()	WSAGetLastError()
-#define strcasecmp      stricmp
-#define strncasecmp     strnicmp
-#define STATIC
-#ifndef EADDRINUSE
-#define EADDRINUSE	WSAEADDRINUSE
-#endif
-#endif /* _WIN32 */
 
 #ifdef __OS2__
 #include <sys/socket.h>
@@ -162,12 +144,20 @@ int gettimeofday(struct timeval *now, void *blah)
 #endif
 #endif
 
+#ifdef ENABLE_DUMP
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
+#include "debug.h"
+
 server_type *types;
 int n_server_types;
 
 /* Values set by command-line arguments
  */
-
 
 
 int hostname_lookup= 0;		/* set if -H was specified */
@@ -252,7 +242,8 @@ time_t run_timeout= 0;
 time_t start_time;
 int waiting_for_masters;
 
-#define ADDRESS_HASH_LENGTH	503
+#define ADDRESS_HASH_LENGTH	2999
+static unsigned num_servers; /* current number of servers in memory */
 static struct qserver **server_hash[ADDRESS_HASH_LENGTH];
 static unsigned int server_hash_len[ADDRESS_HASH_LENGTH];
 static void free_server_hash();
@@ -272,6 +263,7 @@ int current_fileline;
 
 int count_bits( int n);
 
+static int qserver_get_timeout(struct qserver* server, struct timeval* now);
 static int wait_for_timeout( unsigned int ms);
 static void finish_output();
 static void decode_stefmaster_packet( struct qserver *server, char *pkt, int pktlen);
@@ -289,7 +281,7 @@ int html_entity( const char c, char *dest );
 #define NO_KEY_COPY 4
 #define COMBINE_VALUES 8
 
-static char * unreal_colors[] = {
+static const char * unreal_colors[] = {
 	"AliceBlue",
 	"AntiqueWhite",
 	"Aqua",
@@ -432,7 +424,7 @@ static char * unreal_colors[] = {
 	"YellowGreen",
 };
 
-static char *unreal_rgb_colors[] = {
+static const char *unreal_rgb_colors[] = {
 	"#F0F8FF",
 	"#FAEBD7",
 	"#00FFFF",
@@ -1002,6 +994,34 @@ display_gs2_player_info( struct qserver *server)
 }
 
 void
+display_doom3_player_info( struct qserver *server)
+{
+    struct player *player;
+    player= server->players;
+    for ( ; player != NULL; player= player->next)  {
+	if ( player->team_name)
+	    fprintf( OF, "\tscore %4d %6s team %12s %s\n",
+		player->score,
+		ping_time(player->ping),
+		player->team_name,
+		xform_name( player->name, server));
+	else
+	    fprintf( OF, "\tscore %4d %6s team#%d %s\n",
+		player->score,
+		ping_time(player->ping),
+		player->team,
+		xform_name( player->name, server));
+    }
+}
+
+void
+display_hl2_player_info( struct qserver *server )
+{
+	// ATM this looks like halflife player info
+	display_halflife_player_info( server );
+}
+
+void
 display_ravenshield_player_info( struct qserver *server)
 {
     struct player *player = server->players;
@@ -1462,6 +1482,44 @@ raw_display_eye_player_info( struct qserver *server)
 }
 
 void
+raw_display_doom3_player_info( struct qserver *server)
+{
+    static const char *fmt= "%s" "%s%d" "%s%d" "%s%d" "%s%s" "%s%s";
+    static const char *fmt_team_name= "%s" "%s%d" "%s%d" "%s%s" "%s%s" "%s%s";
+    struct player *player;
+
+    player= server->players;
+    for ( ; player != NULL; player= player->next)  {
+	if ( player->team_name)
+	    fprintf( OF, fmt_team_name,
+		xform_name( player->name, server),
+		RD, player->score,
+		RD, player->ping,
+		RD, player->team_name,
+		RD, player->skin ? player->skin : "",
+		RD, play_time( player->connect_time,1)
+	);
+	else
+	    fprintf( OF, fmt,
+		xform_name( player->name, server),
+		RD, player->score,
+		RD, player->ping,
+		RD, player->team,
+		RD, player->skin ? player->skin : "",
+		RD, play_time( player->connect_time,1)
+	);
+	fputs( "\n", OF);
+    }
+}
+
+void
+raw_display_hl2_player_info( struct qserver *server )
+{
+	// ATM this looks like halflife player info
+	raw_display_halflife_player_info( server );
+}
+
+void
 raw_display_gs2_player_info( struct qserver *server)
 {
     static const char *fmt= "%s" "%s%d" "%s%d" "%s%d" "%s%s" "%s%s";
@@ -1793,26 +1851,57 @@ xml_display_unreal_player_info( struct qserver *server)
 	player= server->players;
     for ( ; player != NULL; player= player->next)
 	{
+		struct info *info = player->info;
 		fprintf( OF, "\t\t\t<player>\n");
 
 		fprintf( OF, "\t\t\t\t<name>%s</name>\n",
 			xml_escape(xform_name( player->name, server)));
 		fprintf( OF, "\t\t\t\t<score>%d</score>\n",
 			player->frags);
+		if ( -999 != player->deaths )
+		{
+			fprintf( OF, "\t\t\t\t<deaths>%d</deaths>\n", player->deaths);
+		}
 		fprintf( OF, "\t\t\t\t<ping>%d</ping>\n",
 			player->ping);
+
 		if ( player->team_name)
+		{
 		    fprintf( OF, "\t\t\t\t<team>%s</team>\n",
 			xml_escape(player->team_name));
-		else
+		}
+		else if ( -1 != player->team )
+		{
 		    fprintf( OF, "\t\t\t\t<team>%d</team>\n",
 			player->team);
-		fprintf( OF, "\t\t\t\t<skin>%s</skin>\n",
-			player->skin ? xml_escape(player->skin) : "");
-		fprintf( OF, "\t\t\t\t<mesh>%s</mesh>\n",
-			player->mesh ? xml_escape(player->mesh) : "");
-		fprintf( OF, "\t\t\t\t<face>%s</face>\n",
-			player->face ? xml_escape(player->face) : "");
+		}
+
+		// Some games dont provide
+		// so only display if they do
+		if ( player->skin )
+		{
+			fprintf( OF, "\t\t\t\t<skin>%s</skin>\n",
+				player->skin ? xml_escape(player->skin) : "");
+		}
+		if ( player->mesh )
+		{
+			fprintf( OF, "\t\t\t\t<mesh>%s</mesh>\n",
+				player->mesh ? xml_escape(player->mesh) : "");
+		}
+		if ( player->face )
+		{
+			fprintf( OF, "\t\t\t\t<face>%s</face>\n",
+				player->face ? xml_escape(player->face) : "");
+		}
+		for ( ; NULL != info; info = info->next )
+		{
+			if ( info->name )
+			{
+				char *name = xml_escape( info->name );
+				char *value = xml_escape( info->value );
+				fprintf( OF, "\t\t\t\t<%s>%s</%s>\n", name, value, name );
+			}
+		}
 
 		fprintf( OF, "\t\t\t</player>\n");
 	}
@@ -2069,7 +2158,7 @@ xml_display_eye_player_info( struct qserver *server)
 }
 
 void
-xml_display_gs2_player_info( struct qserver *server)
+xml_display_doom3_player_info( struct qserver *server)
 {
     struct player *player;
 
@@ -2098,6 +2187,63 @@ xml_display_gs2_player_info( struct qserver *server)
 		    fprintf( OF, "\t\t\t\t<time>%s</time>\n",
 			xml_escape(play_time( player->connect_time,1)));
 
+		fprintf( OF, "\t\t\t</player>\n");
+    }
+
+    fprintf( OF, "\t\t</players>\n");
+}
+
+void
+xml_display_hl2_player_info( struct qserver *server )
+{
+	// ATM this looks like halflife player info
+	xml_display_halflife_player_info( server );
+}
+
+void
+xml_display_gs2_player_info( struct qserver *server)
+{
+    struct player *player;
+
+    fprintf( OF, "\t\t<players>\n");
+
+    player= server->players;
+    for ( ; player != NULL; player= player->next)
+	{
+		struct info *info = player->info;
+		fprintf( OF, "\t\t\t<player>\n");
+
+		fprintf( OF, "\t\t\t\t<name>%s</name>\n", xml_escape(xform_name( player->name, server)));
+		fprintf( OF, "\t\t\t\t<score>%d</score>\n", player->score);
+		fprintf( OF, "\t\t\t\t<ping>%d</ping>\n", player->ping);
+		if ( player->team_name)
+		{
+		    fprintf( OF, "\t\t\t\t<team>%s</team>\n", xml_escape(player->team_name));
+		}
+		else
+		{
+		    fprintf( OF, "\t\t\t\t<team>%d</team>\n",player->team);
+		}
+
+		if ( player->skin)
+		{
+		    fprintf( OF, "\t\t\t\t<skin>%s</skin>\n", xml_escape(player->skin));
+		}
+
+		if ( player->connect_time)
+		{
+		    fprintf( OF, "\t\t\t\t<time>%s</time>\n", xml_escape(play_time( player->connect_time,1)));
+		}
+
+		for ( ; NULL != info; info = info->next )
+		{
+			if ( info->name )
+			{
+				char *name = xml_escape( info->name );
+				char *value = xml_escape( info->value );
+				fprintf( OF, "\t\t\t\t<%s>%s</%s>\n", name, value, name );
+			}
+		}
 		fprintf( OF, "\t\t\t</player>\n");
     }
 
@@ -2165,24 +2311,35 @@ display_progress()
 
     gettimeofday( &now, NULL);
 
-    if ( ! rate_start.tv_sec) {
-	rate_start= now;
-	rate[0]='\0';
+    if ( ! rate_start.tv_sec)
+	{
+		rate_start= now;
+		rate[0]='\0';
     }
-    else  {
-	int delta= time_delta( &now, &rate_start);
-	if ( delta > 1500)
-	    sprintf( rate, "  %d servers/sec  ", (num_servers_returned+num_servers_timed_out)*1000 / delta);
-	else
-	    rate[0]='\0';
+    else
+	{
+		int delta= time_delta( &now, &rate_start);
+		if ( delta > 1500 )
+			sprintf( rate, "  %d servers/sec  ", (num_servers_returned+num_servers_timed_out)*1000 / delta);
+		else
+			rate[0]='\0';
     }
 
-    fprintf( stderr, "\r%d/%d (%d timed out, %d down)%s",
-	num_servers_returned+num_servers_timed_out,
-	num_servers_total,
-	num_servers_timed_out,
-	num_servers_down,
-	rate);
+	// only print out every 'progress' number of servers.
+	if (
+		0 != num_servers_returned+num_servers_timed_out &&
+		( progress == 1 ||
+		(num_servers_returned+num_servers_timed_out) % progress == 0 )
+	)
+	{
+		fprintf( stderr, "\r%d/%d (%d timed out, %d down)%s",
+			num_servers_returned+num_servers_timed_out,
+			num_servers_total,
+			num_servers_timed_out,
+			num_servers_down,
+			rate
+		);
+	}
 }
 
 /* ----- END MODIFICATION ----- Don't need to change anything below here. */
@@ -2209,9 +2366,7 @@ static int little_endian;
 static int big_endian;
 unsigned int swap_long( void *);
 unsigned short swap_short( void *);
-unsigned int swap_long_from_little( void *l);
 float swap_float_from_little( void *f);
-unsigned short swap_short_from_little( void *l);
 char * strndup( const char *string, size_t len);
 #define FORCE 1
 
@@ -2280,7 +2435,11 @@ usage( char *msg, char **argv, char *a1)
     printf( "-H\t\tresolve host names\n");
     printf( "-Hcache\t\thost name cache file\n");
 	printf( "-carets\t\tDisplay carets in Quake 3 player names\n" );
-	printf( "-d\t\tEnable debug options. By default, enables printing of all received packets to stderr.\n" );
+	printf( "-d\t\tEnable debug options. By default, enables printing of all received packets to stderr.\n"
+#ifdef ENABLE_DUMP
+			"  \t\tspecify three -d to write raw packets to dumpNNN files\n"
+#endif
+			);
 	printf( "-htmlmode\tConvert <, >, and & to the equivalent HTML entities\n" );
 	printf( "-htmlnames\tColorize Quake 3 and Tribes 2 player names using html font tags\n" );
 	printf( "-nohtmlnames\tDo not colorize Quake 3 and Tribes 2 player names even if $HTML is used in an output template.\n" );
@@ -2540,21 +2699,243 @@ revert_server_types()
     types= &builtin_types[0];
 }
 
+unsigned pkt_dump_pos = 0;
+#ifdef ENABLE_DUMP
+const char* pkt_dumps[64] = {0};
+static void add_pkt_from_file(const char* file)
+{
+	if(pkt_dump_pos >= sizeof(pkt_dumps)/sizeof(pkt_dumps[0]))
+		return;
+	pkt_dumps[pkt_dump_pos++] = file;
+}
+#endif
+
+/** FIXME: support multiple packets */
+static void replay_pkt_dumps()
+{
+#ifdef ENABLE_DUMP
+	struct qserver* server = servers;
+	char* pkt = NULL;
+	int fd;
+	struct stat statbuf;
+	gettimeofday( &packet_recv_time, NULL);
+
+	if((fd = open(pkt_dumps[0], O_RDONLY)) == -1) goto err;
+	if(fstat(fd, &statbuf) == -1) goto err;
+	pkt = mmap(NULL, statbuf.st_size, PROT_READ, MAP_SHARED, fd, 0);
+	if(!pkt) goto err;
+
+	server->type->packet_func( server, pkt, statbuf.st_size);
+
+	goto out;
+
+err:
+	perror(__FUNCTION__);
+out:
+	close(fd);
+#endif // ENABLE_DUMP
+}
+
+struct rcv_pkt
+{
+	struct qserver* server;
+	struct sockaddr_in addr;
+	struct timeval recv_time;
+	char data[PACKET_LEN];
+	int len;
+	int _errno;
+};
+
+void do_work(void)
+{
+	int pktlen, rc, fd;
+	char *pkt= NULL;
+	int bind_retry= 0;
+	struct timeval timeout;
+	struct rcv_pkt* buffer;
+	unsigned buffill = 0, i = 0;
+	unsigned bufsize = max_simultaneous*2;
+
+	struct timeval t,ts;
+	gettimeofday(&t, NULL);
+	ts = t;
+
+	buffer = malloc(sizeof(struct rcv_pkt) * bufsize);
+
+	if(!buffer) return;
+
+	if(pkt_dump_pos)
+	{
+		replay_pkt_dumps();
+	}
+	else
+	{
+		bind_retry = bind_sockets();
+	}
+
+	send_packets();
+
+	debug(2, "connected: %d", connected);
+
+	while ( connected || (!connected && bind_retry==-2))
+	{
+		if ( ! connected && bind_retry==-2)
+		{
+			rc= wait_for_timeout( 60);
+			bind_retry= bind_sockets();
+			continue;
+		}
+		bind_retry= 0;
+
+		set_file_descriptors();
+
+		if ( progress)
+			display_progress();
+
+		get_next_timeout( &timeout);
+
+		rc= wait_for_file_descriptors( &timeout);
+
+		debug(2, "rc %d", rc);
+
+		if ( rc == SOCKET_ERROR)
+		{
+#ifdef _ISUNIX
+			if ( errno == EINTR)
+				continue;
+#endif
+			perror("select");
+			break;
+		}
+
+		fd= 0;
+		for ( ; rc && buffill < bufsize; rc--)
+		{
+			int addrlen= sizeof(buffer[buffill].addr);
+			struct qserver* server= get_next_ready_server();
+			if ( server == NULL)
+				break;
+			gettimeofday( &buffer[buffill].recv_time, NULL);
+
+			pktlen = recvfrom( server->fd,
+						buffer[buffill].data,
+						sizeof(buffer[buffill].data),
+						0,
+						(struct sockaddr*)&buffer[buffill].addr,
+						&addrlen);
+
+			if ( pktlen == SOCKET_ERROR)
+			{
+				if(errno == EAGAIN)
+				{
+					malformed_packet(server, "EAGAIN on UDP socket, probably incorrect checksum");
+				}
+				else if ( connection_refused())
+				{
+					server->server_name= DOWN;
+					num_servers_down++;
+					cleanup_qserver( server, 1);
+				}
+				continue;
+			}
+
+			debug(1, "recv %3d %3d %d.%d.%d.%d:%hu\n",
+					time_delta(&buffer[buffill].recv_time, &ts),
+					time_delta(&buffer[buffill].recv_time, &t),
+					server->ipaddr&0xff,
+					(server->ipaddr>>8)&0xff,
+					(server->ipaddr>>16)&0xff,
+					(server->ipaddr>>24)&0xff,
+					server->port);
+
+			t = buffer[buffill].recv_time;
+
+			buffer[buffill].server = server;
+			buffer[buffill].len = pktlen;
+			++buffill;
+		}
+
+		for(i = 0; i < buffill; ++i)
+		{
+			struct qserver* server = buffer[i].server;
+			pkt = buffer[i].data;
+			pktlen = buffer[i].len;
+			memcpy(&packet_recv_time, &buffer[i].recv_time, sizeof(packet_recv_time));
+
+			if ( get_debug_level() > 0 )
+				print_packet( server, pkt, pktlen);
+
+#ifdef ENABLE_DUMP
+			if (get_debug_level() > 2)
+				dump_packet(pkt, pktlen);
+#endif
+
+			if ( server->flags & FLAG_BROADCAST)
+			{
+				struct qserver *broadcast= server;
+				unsigned short port= ntohs(buffer[i].addr.sin_port);
+				/* create new server and init */
+				if ( ! (no_port_offset || server->flags & TF_NO_PORT_OFFSET))
+					port-= server->type->port_offset;
+				server= add_qserver_byaddr( ntohl(buffer[i].addr.sin_addr.s_addr),
+					port, server->type, NULL);
+				if ( server == NULL)
+				{
+					server= find_server_by_address( buffer[i].addr.sin_addr.s_addr,
+					ntohs(buffer[i].addr.sin_port));
+					if ( server == NULL)
+					continue;
+	/*
+					if ( show_errors)
+					{
+						fprintf(stderr,
+							"duplicate or invalid packet received from 0x%08x:%hu\n",
+							ntohl(buffer[i].addr.sin_addr.s_addr), ntohs(buffer[i].addr.sin_port));
+						print_packet( NULL, pkt, pktlen);
+					}
+					continue;
+	*/
+				}
+				else
+				{
+					server->packet_time1= broadcast->packet_time1;
+					server->packet_time2= broadcast->packet_time2;
+					server->ping_total= broadcast->ping_total;
+					server->n_requests= broadcast->n_requests;
+					server->n_packets= broadcast->n_packets;
+					broadcast->n_servers++;
+				}
+			}
+
+			debug(2, "connected: %d", connected);
+			server->type->packet_func( server, pkt, pktlen);
+			debug(2, "connected: %d", connected);
+		}
+		buffill = 0;
+
+		if ( run_timeout && time(0)-start_time >= run_timeout)
+		{
+			debug(2, "run timeout reached");
+			break;
+		}
+
+		send_packets();
+		if ( connected < max_simultaneous)
+			bind_retry= bind_sockets();
+
+		debug(2, "connected: %d", connected);
+	}
+
+	free(buffer);
+}
 
 int
 main( int argc, char *argv[])
 {
-    int pktlen, rc, fd;
-    long pkt_data[PACKET_LEN/sizeof(long)];
-    char *pkt= (char*)&pkt_data[0];
-    struct timeval timeout;
     int arg, n_files, i;
-    struct qserver *server;
     char **files, *outfilename, *query_arg;
     struct server_arg *server_args= NULL;
     int n_server_args= 0, max_server_args= 0;
-    int show_recv_packets= 0;
-    int bind_retry= 0;
     int default_server_type_id;
 
 #ifdef _WIN32
@@ -2593,6 +2974,9 @@ main( int argc, char *argv[])
 	outfilename= NULL;
 	if ( strcmp( argv[arg], "-nocfg") == 0 && arg == 1)  {
 	    revert_server_types();
+	}
+	else if ( strcmp( argv[arg], "--help") == 0)  {
+		usage(NULL,argv,NULL);
 	}
 	else if ( strcmp( argv[arg], "-f") == 0)  {
 	    arg++;
@@ -2744,8 +3128,11 @@ main( int argc, char *argv[])
 	    if ( run_timeout <= 0)
 		usage( "value for -timeout must be > 0\n", argv,NULL);
 	}
-	else if ( strcmp( argv[arg], "-progress") == 0)  {
+	else if ( strncmp(argv[arg], "-progress", sizeof("-progress")-1) == 0) {
+	    char *p= argv[arg] + sizeof("-progress")-1;
 	    progress= 1;
+	    if ( *p == ',')
+		progress= atoi(p+1);
  	}
 	else if ( strcmp( argv[arg], "-Hcache") == 0)  {
 	    arg++;
@@ -2808,14 +3195,15 @@ main( int argc, char *argv[])
 		return 1;
 	}
 	else if ( strcmp( argv[arg], "-sort") == 0)  {
+		size_t pos;
 	    arg++;
 	    if ( arg >= argc)
 		usage( "missing argument for -sort\n", argv, NULL);
 	    strncpy( sort_keys, argv[arg], sizeof(sort_keys)-1);
-	    rc= strspn( sort_keys, SUPPORTED_SORT_KEYS);
-	    if ( rc != strlen( sort_keys))  {
+	    pos= strspn( sort_keys, SUPPORTED_SORT_KEYS);
+	    if ( pos != strlen( sort_keys))  {
 		fprintf( stderr, "Unknown sort key \"%c\", valid keys are \"%s\"\n",
-			sort_keys[rc], SUPPORTED_SORT_KEYS);
+			sort_keys[pos], SUPPORTED_SORT_KEYS);
 		return 1;
 	    }
 	    server_sort= strpbrk( sort_keys, SUPPORTED_SERVER_SORT) != NULL;
@@ -2865,7 +3253,7 @@ main( int argc, char *argv[])
 	    strip_carets= 0;
 	}
 	else if ( strcmp( argv[arg], "-d") == 0)  {
-	    show_recv_packets= 1;
+	    set_debug_level(get_debug_level() + 1);
 	}
 	else if ( strcmp( argv[arg], "-showgameport") == 0)  {
 	    show_game_port= 1;
@@ -2900,6 +3288,14 @@ main( int argc, char *argv[])
 		return 1;
 	    add_config_server_types();
 	}
+#ifdef ENABLE_DUMP
+	else if ( strcmp( argv[arg], "-pkt") == 0)  {
+	    arg++;
+	    if ( arg >= argc)
+		usage( "missing argument for %s\n", argv, argv[arg-1]);
+	    add_pkt_from_file(argv[arg]);
+	}
+#endif
 #ifdef _WIN32
 	else if ( strcmp( argv[arg], "-noconsole") == 0)  {
 	    FreeConsole();
@@ -2991,120 +3387,7 @@ main( int argc, char *argv[])
 	h2_serverinfo.length= htons( h2_serverinfo.length);
 	q_player.length= htons( q_player.length);
 
-	bind_sockets();
-
-	while ( connected || (!connected && bind_retry==-2))
-	{
-		int last_connected= connected;
-
-		if ( ! connected && bind_retry==-2)
-		{
-			rc= wait_for_timeout( 60);
-			bind_retry= bind_sockets();
-			continue;
-		}
-		bind_retry= 0;
-
-		set_file_descriptors();
-
-		if ( progress)
-			display_progress();
-		get_next_timeout( &timeout);
-
-		rc= wait_for_file_descriptors( &timeout);
-
-		if ( rc == 0)
-		{
-			if ( run_timeout && time(0)-start_time >= run_timeout)
-				break;
-			send_packets();
-			bind_retry= bind_sockets();
-			continue;
-		}
-		if ( rc == SOCKET_ERROR)
-		{
-#ifdef _ISUNIX
-			if ( errno == EINTR)
-				continue;
-#endif
-			perror("select");
-			break;
-		}
-
-		gettimeofday( &packet_recv_time, NULL);
-		fd= 0;
-		for ( ; rc; rc--)
-		{
-			struct sockaddr_in addr;
-			int addrlen= sizeof(addr);
-			server= get_next_ready_server();
-			if ( server == NULL)
-				break;
-			if ( server->flags & FLAG_BROADCAST)
-				pktlen= recvfrom( server->fd, pkt, sizeof(pkt_data), 0,
-				(struct sockaddr*)&addr, &addrlen);
-			else
-				pktlen= recv( server->fd, pkt, sizeof(pkt_data), 0);
-
-			if ( pktlen == SOCKET_ERROR)
-			{
-				if ( connection_refused())
-				{
-					server->server_name= DOWN;
-					num_servers_down++;
-					cleanup_qserver( server, 1);
-					if ( ! connected)
-						bind_retry= bind_sockets();
-				}
-				continue;
-			}
-			if ( server->flags & FLAG_BROADCAST)
-			{
-				struct qserver *broadcast= server;
-				unsigned short port= ntohs(addr.sin_port);
-				/* create new server and init */
-				if ( ! (no_port_offset || server->flags & TF_NO_PORT_OFFSET))
-					port-= server->type->port_offset;
-				server= add_qserver_byaddr( ntohl(addr.sin_addr.s_addr),
-					port, server->type, NULL);
-				if ( server == NULL)
-				{
-					server= find_server_by_address( addr.sin_addr.s_addr,
-					ntohs(addr.sin_port));
-					if ( server == NULL)
-					continue;
-	/*
-					if ( show_errors)
-					{
-						fprintf(stderr,
-							"duplicate or invalid packet received from 0x%08x:%hu\n",
-							ntohl(addr.sin_addr.s_addr), ntohs(addr.sin_port));
-						print_packet( NULL, pkt, pktlen);
-					}
-					continue;
-	*/
-				}
-				else
-				{
-					server->packet_time1= broadcast->packet_time1;
-					server->packet_time2= broadcast->packet_time2;
-					server->ping_total= broadcast->ping_total;
-					server->n_requests= broadcast->n_requests;
-					server->n_packets= broadcast->n_packets;
-					broadcast->n_servers++;
-				}
-			}
-
-			if ( show_recv_packets)
-			print_packet( server, pkt, pktlen);
-			server->type->packet_func( server, pkt, pktlen);
-		}
-
-		if ( run_timeout && time(0)-start_time >= run_timeout)
-			break;
-		if ( connected != last_connected)
-			bind_retry= bind_sockets();
-	}
+	do_work();
 
 	finish_output();
 	free_server_hash();
@@ -3355,6 +3638,7 @@ add_qserver( char *arg, server_type* type, char *outfilename, char *query_arg)
     else if ( one_server_type_id != type->id)
 	one_server_type_id= 0;
 
+    ++num_servers;
     return 0;
 }
 
@@ -3413,6 +3697,8 @@ add_qserver_byaddr( unsigned int ipaddr, unsigned short port,
     last_server= & server->next;
 
     add_server_to_hash( server);
+
+    ++num_servers;
 
     return server;
 }
@@ -3680,9 +3966,13 @@ bind_qserver( struct qserver *server)
 	}
     }
 
+    // we need nonblocking always. poll on an udp socket would wake
+    // up and recv blocks if a packet with incorrect checksum is
+    // received
+    set_non_blocking( server->fd);
+
     if ( server->type->flags & TF_TCP_CONNECT)  {
 	int one= 1;
-	set_non_blocking( server->fd);
 	setsockopt( server->fd, IPPROTO_TCP, TCP_NODELAY,
 		(char*) &one, sizeof(one));
     }
@@ -3713,75 +4003,130 @@ bind_qserver( struct qserver *server)
     return 0;
 }
 
+static struct timeval t_lastsend = {0,0};
+
 int
 bind_sockets()
 {
-    struct qserver *server;
-    int rc, retry_count= 0;;
+	struct qserver *server;
+	struct timeval now;
+	int rc, retry_count= 0;;
 
-    if ( !waiting_for_masters)  {
-	if ( last_server_bind == NULL)
-	    last_server_bind= servers;
-	server= last_server_bind;
-    }
-    else
-	server= servers;
+	gettimeofday(&now, NULL);
+	if(connected && time_delta(&now, &t_lastsend) < 5)
+	{
+		server = NULL;
+	}
+	else if ( !waiting_for_masters)
+	{
+		if ( last_server_bind == NULL)
+		{
+			last_server_bind= servers;
+		}
+		server= last_server_bind;
+	}
+	else
+	{
+		server= servers;
+	}
 
-    for ( ; server != NULL && connected < max_simultaneous;
-		server= server->next)  {
-	if ( server->server_name == NULL && server->fd == -1)  {
-	    if ( waiting_for_masters && !server->type->master)
-		continue;
-	    if ( (rc= bind_qserver( server)) == 0)  {
-		server->type->status_query_func( server);
-		connected++;
-		if ( !waiting_for_masters)
-		    last_server_bind= server;
-	    }
-	    else if ( rc == -2 && ++retry_count > 2)
+	for ( ; server != NULL && connected < max_simultaneous; server= server->next)
+	{
+		if ( server->server_name == NULL && server->fd == -1)
+		{
+			if ( waiting_for_masters && !server->type->master)
+			{
+				continue;
+			}
+
+			if ( (rc= bind_qserver( server)) == 0)
+			{
+				debug(1, "send %d.%d.%d.%d:%hu\n",
+						server->ipaddr&0xff,
+						(server->ipaddr>>8)&0xff,
+						(server->ipaddr>>16)&0xff,
+						(server->ipaddr>>24)&0xff,
+						server->port);
+
+				gettimeofday(&t_lastsend, NULL);
+				server->type->status_query_func( server);
+				connected++;
+				if ( !waiting_for_masters)
+				{
+					last_server_bind= server;
+				}
+				break;
+			}
+			else if ( rc == -2 && ++retry_count > 2)
+			{
+				return -2;
+			}
+		}
+	}
+
+	if ( ! connected && retry_count)
+	{
 		return -2;
 	}
-    }
-    if ( ! connected && retry_count)
-	return -2;
-    return 0;
+
+	return 0;
 }
 
 
 /* Functions for sending packets
  */
+// this is so broken, someone please rewrite the timeout handling
 void
 send_packets()
 {
-    struct qserver *server= servers;
-    struct qserver *next= NULL;
+    struct qserver *server;
     struct timeval now;
     int interval, n_sent=0, prev_n_sent;
+    unsigned i;
 
     gettimeofday( &now, NULL);
 
-    for ( ; server != NULL; server= next)  {
-	next= server->next;
-	if ( server->fd == -1)
-	    continue;
+    if(!t_lastsend.tv_sec)
+    {
+    }
+    else if(connected && time_delta(&now, &t_lastsend) < 5)
+    {
+	return;
+    }
+
+    for (i = 0; i < max_connmap; ++i)  {
+	server = connmap[i];
+	if(!server) continue;
+	if(server->fd == -1)
+	{
+	    debug(0, "invalid entry in connmap\n");
+	}
+
 	if ( server->type->id & MASTER_SERVER)
 	    interval= master_retry_interval;
 	else
 	    interval= retry_interval;
+	debug(2, "server %p, name %s, retry1 %d, next_rule %p, next_player_info %p, num_players %d", server, server->server_name, server->retry1, server->next_rule, server->next_player_info, server->num_players);
 	prev_n_sent= n_sent;
 	if ( server->server_name == NULL ||
 		!(server->type->flags & TF_SINGLE_QUERY) )  {
 	    if ( server->retry1 != n_retries &&
 		    time_delta( &now, &server->packet_time1) <
 			(interval*(n_retries-server->retry1+1)))
+	    {
 		continue;
+	    }
 	    if ( ! server->retry1)  {
 		cleanup_qserver( server, 1);
 		continue;
 	    }
-	    server->type->status_query_func( server);
-	    n_sent++;
-	    continue;
+	    if(qserver_get_timeout(server, &now) <= 0)
+	    {
+		    server->type->status_query_func( server);
+		    gettimeofday(&t_lastsend, NULL);
+		    n_sent++;
+		    continue;
+	    }
 	}
 	if ( server->next_rule != NO_SERVER_RULES)  {
 	    if ( server->retry1 != n_retries &&
@@ -3795,6 +4140,7 @@ send_packets()
 		continue;
 	    }
 	    send_rule_request_packet( server);
+	    gettimeofday(&t_lastsend, NULL);
 	    n_sent++;
 	}
 	if ( server->next_player_info < server->num_players &&
@@ -3812,9 +4158,11 @@ send_packets()
 		server->retry2= n_retries;
 	    }
 	    send_player_request_packet( server);
+	    gettimeofday(&t_lastsend, NULL);
 	    n_sent++;
 	}
 	if ( prev_n_sent == n_sent)  {
+	    debug(2, "%d %d", time_delta( &now, &server->packet_time1), (interval*(n_retries+1)));
 	    if ( ! server->retry1 && time_delta( &now, &server->packet_time1) >
 			(interval*(n_retries+1)))
 		cleanup_qserver( server, 1);
@@ -3986,6 +4334,39 @@ send_ut2003_request_packet( struct qserver *server)
     server->n_packets++;
 }
 
+// First packet for an Half-Life 2 server
+void
+send_hl2_request_packet( struct qserver *server)
+{
+    int rc;
+
+    if ( server->flags & FLAG_BROADCAST)
+    {
+		rc= send_broadcast( server, server->type->status_packet, server->type->status_len);
+	}
+    else
+    {
+		rc= send( server->fd, server->type->status_packet, server->type->status_len, 0);
+	}
+
+    if ( rc == SOCKET_ERROR)
+    {
+		perror( "send");
+	}
+
+    if ( server->retry1 == n_retries || server->flags & FLAG_BROADCAST)
+    {
+		gettimeofday( &server->packet_time1, NULL);
+		server->n_requests++;
+    }
+    else
+    {
+		server->n_retries++;
+	}
+    server->retry1--;
+    server->n_packets++;
+}
+
 /* First packet for an Unreal master
  */
 void
@@ -4021,6 +4402,46 @@ static const char* steam_region[] =
 	NULL
 };
 
+unsigned char build_doom3_masterfilter(struct qserver* server)
+{
+	int flen = 0;
+	char *pkt, *r, *sep= "";
+	unsigned char b = 0;
+	pkt = get_param_value( server, "status", NULL);
+	r = pkt ;
+	while ( pkt && sep )
+	{
+		sep= strchr( r, ':');
+		if ( sep )
+			flen= sep-r;
+		else
+			flen= strlen(r);
+
+		if ( strncmp( r, "password", flen) == 0)
+			b |= 0x01;
+		else if ( strncmp( r, "nopassword", flen) == 0)
+			b |= 0x02;
+		else if ( strncmp( r, "notfull", flen) == 0)
+			b |= 0x04;
+		else if ( strncmp( r, "notfullnotempty", flen) == 0)
+			b |= 0x08;
+		r= sep+1;
+	}
+
+	pkt = get_param_value( server, "gametype", NULL);
+	if(pkt)
+	{
+		if ( strncmp( pkt, "dm", flen) == 0)
+			b |= 0x10;
+		else if ( strncmp( pkt, "tourney", flen) == 0)
+			b |= 0x20;
+		else if ( strncmp( pkt, "tdm", flen) == 0)
+			b |= 0x30;
+	}
+
+	return b;
+}
+
 char *
 build_hlmaster_packet( struct qserver *server, int *len)
 {
@@ -4032,7 +4453,7 @@ build_hlmaster_packet( struct qserver *server, int *len)
 	pkt= &packet[0];
 	memcpy( pkt, server->type->master_packet, *len );
 
-	if ( server->type->id == STEAM_MASTER )
+	if ( server->type->flags & TF_MASTER_STEAM )
 	{
 		// default the region to 0xff
 		const char* regionstring = get_param_value( server, "region", NULL );
@@ -4066,12 +4487,14 @@ build_hlmaster_packet( struct qserver *server, int *len)
 		pkt+= sprintf( pkt, "\\gamedir\\%s", gamedir);
 	}
 
+	// not valid for steam?
 	map = get_param_value( server, "map", NULL);
 	if ( map )
 	{
 		pkt+= sprintf( pkt, "\\map\\%s", map);
 	}
 
+	// not valid for steam?
 	flags= get_param_value( server, "status", NULL);
 	r= flags;
 	while ( flags && sep )
@@ -4088,7 +4511,7 @@ build_hlmaster_packet( struct qserver *server, int *len)
 			pkt+= sprintf( pkt, "\\full\\1");
 		else if ( strncmp( r, "dedicated", flen) == 0)
 		{
-			if ( server->type->id == STEAM_MASTER )
+			if ( server->type->flags & TF_MASTER_STEAM )
 				pkt+= sprintf( pkt, "\\type\\d");
 			else
 				pkt+= sprintf( pkt, "\\dedicated\\1");
@@ -4154,7 +4577,7 @@ send_qwmaster_request_packet( struct qserver *server)
 				packet= build_hlmaster_packet( server, &packet_len);
 			}
 		}
-		else if ( server->type->id == STEAM_MASTER)
+		else if ( server->type->flags & TF_MASTER_STEAM)
 		{
 			// region
 			int tag_len = strlen( server->master_query_tag );
@@ -4189,6 +4612,24 @@ send_qwmaster_request_packet( struct qserver *server)
 				packet_len++;
 			}
 		}
+		else if ( server->type->id == DOOM3_MASTER)
+		{
+			char *proto = server->query_arg;
+			if(proto)
+			{
+				unsigned ver = (atoi(proto) & 0xFFFF) << 16;
+				proto = strchr(proto, '.');
+				if(proto && *++proto)
+				{
+					ver |= (atoi(proto) & 0xFFFF);
+				}
+				memcpy(query_buf, packet, packet_len);
+				put_long_little(ver, query_buf+13);
+				query_buf[18] = build_doom3_masterfilter(server);
+				packet = query_buf;
+			}
+
+		}
 		else if ( server->type->flags & TF_QUERY_ARG)
 		{
 			// fill in the master protocol details
@@ -4197,7 +4638,7 @@ send_qwmaster_request_packet( struct qserver *server)
 			{
 				master_protocol= server->type->master_protocol;
 			}
-			packet_len = snprintf( query_buf, sizeof(query_buf), server->type->master_packet,
+			packet_len = sprintf( query_buf, server->type->master_packet,
 				master_protocol?master_protocol:"",
 				server->type->master_query?server->type->master_query:"");
 			packet = query_buf;
@@ -4729,6 +5170,29 @@ setup_retry:
     server->n_packets++;
 }
 
+void qserver_disconnect(struct qserver* server)
+{
+#ifdef _WIN32
+    int i;
+#endif
+    if ( server->fd != -1)  {
+	close( server->fd);
+#ifdef _ISUNIX
+	connmap[server->fd]= NULL;
+#endif
+#ifdef _WIN32
+	for ( i= 0; i < max_connmap; i++)  {
+	    if ( connmap[i] == server)  {
+		connmap[i]= NULL;
+		break;
+	    }
+	}
+#endif
+	server->fd= -1;
+	connected--;
+    }
+}
+
 /* Functions for figuring timeouts and when to give up
  * Returns 1 if the query is done (server may be freed) and 0 if not.
  */
@@ -4736,9 +5200,6 @@ int
 cleanup_qserver( struct qserver *server, int force)
 {
     int close_it= force;
-#ifdef _WIN32
-    int i;
-#endif
     if ( server->server_name == NULL)  {
 	close_it= 1;
 	if ( server->type->id & MASTER_SERVER && server->master_pkt != NULL)
@@ -4770,22 +5231,7 @@ cleanup_qserver( struct qserver *server, int force)
 	    server->saved_data.next= NULL;
 	}
 
-	if ( server->fd != -1)  {
-	    close( server->fd);
-#ifdef _ISUNIX
-	    connmap[server->fd]= NULL;
-#endif
-#ifdef _WIN32
-	    for ( i= 0; i < max_connmap; i++)  {
-		if ( connmap[i] == server)  {
-		    connmap[i]= NULL;
-		    break;
-		}
-	    }
-#endif
-	    server->fd= -1;
-	    connected--;
-	}
+	qserver_disconnect(server);
 
 	if ( server->server_name != TIMEOUT)  {
 	    num_servers_returned++;
@@ -4808,13 +5254,43 @@ cleanup_qserver( struct qserver *server, int force)
     return 0;
 }
 
+/** must be called only on connected servers
+ * @returns time in ms until server needs timeout handling. timeout handling is needed if <= zero
+ */
+static int qserver_get_timeout(struct qserver* server, struct timeval* now)
+{
+	int diff, diff1, diff2, interval;
+
+	if ( server->type->id & MASTER_SERVER)
+		interval= master_retry_interval;
+	else
+		interval= retry_interval;
+
+	diff2= 0xffff;
+	diff1= 0xffff;
+	if ( server->server_name == NULL)
+		diff1= interval*(n_retries-server->retry1+1) -
+			time_delta( now, &server->packet_time1);
+	else  {
+		if ( server->next_rule != NO_SERVER_RULES)
+			diff1= interval*(n_retries-server->retry1+1) -
+				time_delta( now, &server->packet_time1);
+		if ( server->next_player_info < server->num_players)
+			diff2= interval*(n_retries-server->retry2+1) -
+				time_delta( now, &server->packet_time2);
+	}
+	diff= (diff1<diff2)?diff1:diff2;
+
+	return diff;
+}
+
 void
 get_next_timeout( struct timeval *timeout)
 {
     struct qserver *server= servers;
     struct timeval now;
-    int diff1, diff2, diff, smallest= retry_interval+master_retry_interval;
-    int interval, bind_count= 0;
+    int diff, smallest= retry_interval+master_retry_interval;
+    int bind_count= 0;
 
     if ( first_server_bind == NULL)
 	first_server_bind= servers;
@@ -4823,7 +5299,9 @@ get_next_timeout( struct timeval *timeout)
 
     for ( ; server != NULL && server->fd == -1; server= server->next)
 	;
-    if ( server == NULL)  {
+
+    /* if there are unconnected servers and slots left we retry in 10ms */
+    if ( server == NULL || (num_servers > connected && connected < max_simultaneous))  {
 	timeout->tv_sec= 0;
 	timeout->tv_usec= 10 * 1000;
 	return;
@@ -4834,30 +5312,16 @@ get_next_timeout( struct timeval *timeout)
     for ( ; server != NULL && bind_count < connected; server= server->next)  {
 	if ( server->fd == -1)
 	    continue;
-	if ( server->type->id & MASTER_SERVER)
-	    interval= master_retry_interval;
-	else
-	    interval= retry_interval;
-	diff2= 0xffff;
-	diff1= 0xffff;
-	if ( server->server_name == NULL)
-	    diff1= interval*(n_retries-server->retry1+1) -
-		time_delta( &now, &server->packet_time1);
-	else  {
-	    if ( server->next_rule != NULL)
-		diff1= interval*(n_retries-server->retry1+1) -
-			time_delta( &now, &server->packet_time1);
-	    if ( server->next_player_info < server->num_players)
-		diff2= interval*(n_retries-server->retry2+1) -
-			time_delta( &now, &server->packet_time2);
-	}
-	diff= (diff1<diff2)?diff1:diff2;
+
+	diff = qserver_get_timeout(server, &now);
 	if ( diff < smallest)
 	    smallest= diff;
 	bind_count++;
     }
+
     if ( smallest < 10)
 	smallest= 10;
+
     timeout->tv_sec= smallest / 1000;
     timeout->tv_usec= (smallest % 1000) * 1000;
 }
@@ -4871,7 +5335,7 @@ static int select_cursor;
 int
 set_fds( fd_set *fds)
 {
-	int maxfd= 1, i;
+	int maxfd= -1, i;
 
 	for ( i= 0; i < max_connmap; i++)
 	{
@@ -5050,12 +5514,14 @@ free_server( struct qserver *server)
 	    server->server_name != BFRIS_SERVER_NAME)  {
 	free( server->server_name);
     }
+
 /*
 params ...
 saved_data ...
 */
 
     free( server);
+    --num_servers;
 }
 
 void
@@ -5591,6 +6057,57 @@ deal_with_descent3master_packet( struct qserver *server, char *rawpkt, int pktle
     }
 }
 
+static const char doom3_masterresponse[] = "\xFF\xFFservers";
+void
+deal_with_doom3master_packet( struct qserver *server, char *rawpkt, int pktlen)
+{
+	char* pkt, *dest;
+	int len;
+	server->ping_total+= time_delta( &packet_recv_time,
+		&server->packet_time1);
+
+	if ( pktlen < sizeof(doom3_masterresponse)
+			|| (pktlen - sizeof(doom3_masterresponse)) % 6
+			|| memcmp( doom3_masterresponse, rawpkt, sizeof(doom3_masterresponse) ) != 0 )
+	{
+		server->server_name= SERVERERROR;
+		server->master_pkt_len = 0;
+		malformed_packet(server, "too short or invalid response");
+		cleanup_qserver( server, 1);
+		return;
+	}
+
+	pkt = rawpkt + sizeof(doom3_masterresponse);
+	len	= pktlen - sizeof(doom3_masterresponse);
+
+	if(server->master_pkt_len < len)
+	{
+		server->master_pkt = (char*)realloc( server->master_pkt, len);
+	}
+	server->master_pkt_len = len;
+
+	dest = server->master_pkt;
+	while(len > 0)
+	{
+		memcpy(dest, pkt, 4 );
+		dest[4] = pkt[5];
+		dest[5] = pkt[4];
+		dest += 6;
+		pkt += 6;
+		len -= 6;
+	}
+	assert(len == 0);
+
+	server->n_servers= server->master_pkt_len / 6;
+	server->next_player_info= -1;
+	server->retry1= 0;
+
+	debug(2, "%d servers added", server->n_servers);
+
+	server->server_name = MASTER;
+	cleanup_qserver( server, 0);
+	bind_sockets();
+}
 
 /* Packet from QuakeWorld master server
  */
@@ -5619,30 +6136,27 @@ deal_with_qwmaster_packet( struct qserver *server, char *rawpkt, int pktlen)
 		rawpkt+= 2;
 		pktlen-= 2;
 	}
-	else if ( rawpkt[0] == HL_SERVERS && rawpkt[1] == 0x0d)
+	else if ( rawpkt[0] == HL_SERVERS && rawpkt[1] == 0x0d )
 	{
-		if ( server->type->id == STEAM_MASTER )
-		{
-			// no sequence id for steam
-			// instead we use the ip:port of the last recieved server
-			struct in_addr *sin_addr = (struct in_addr*)(rawpkt+pktlen-6);
-			char *ip = inet_ntoa( *sin_addr );
-			unsigned short port = htons( *((unsigned short*)(rawpkt+pktlen-2)) );
+		// 2 byte id + 4 byte sequence
+		memcpy( server->master_query_tag, rawpkt+2, 3);
+		rawpkt+= 6;
+		pktlen-= 6;
+	}
+	else if ( rawpkt[0] == HL_SERVERS && rawpkt[1] == 0x0a )
+	{
+		// no sequence id for steam
+		// instead we use the ip:port of the last recieved server
+		struct in_addr *sin_addr = (struct in_addr*)(rawpkt+pktlen-6);
+		char *ip = inet_ntoa( *sin_addr );
+		unsigned short port = htons( *((unsigned short*)(rawpkt+pktlen-2)) );
 
-			//fprintf( stderr, "NEXT IP=%s:%u\n", ip, port );
-			sprintf( server->master_query_tag, "%s:%u", ip, port );
+		//fprintf( stderr, "NEXT IP=%s:%u\n", ip, port );
+		sprintf( server->master_query_tag, "%s:%u", ip, port );
 
-			// skip over the 2 byte id
-			rawpkt+= 2;
-			pktlen-= 2;
-		}
-		else
-		{
-			// 2 byte id + 4 byte sequence
-			memcpy( server->master_query_tag, rawpkt+2, 3);
-			rawpkt+= 6;
-			pktlen-= 6;
-		}
+		// skip over the 2 byte id
+		rawpkt+= 2;
+		pktlen-= 2;
 	}
 	else if ( strncmp( rawpkt, "servers", 7) == 0)
 	{
@@ -5727,7 +6241,7 @@ deal_with_qwmaster_packet( struct qserver *server, char *rawpkt, int pktlen)
 			send_qwmaster_request_packet( server);
 		}
 	}
-	else if ( server->type->id == STEAM_MASTER )
+	else if ( server->type->flags & TF_MASTER_STEAM )
 	{
 		// should the HL_MASTER be the same as this?
 		int i;
@@ -5738,6 +6252,7 @@ deal_with_qwmaster_packet( struct qserver *server, char *rawpkt, int pktlen)
 		if ( i == pktlen )
 		{
 			// last 6 bytes where 0x00 so we have reached the last packet
+			server->n_servers--;
 			server->master_pkt_len -= 6;
 			server->server_name = MASTER;
 			cleanup_qserver( server, 1);
@@ -6162,6 +6677,77 @@ rule_info_packet( struct qserver *server, struct q_packet *pkt, int datalen)
     return 0;
 }
 
+struct info *
+player_add_info( struct player *player, char *key, char *value, int flags)
+{
+    struct info *info;
+    if ( flags & CHECK_DUPLICATE_RULES )
+	{
+		for ( info = player->info; info; info = info->next )
+		{
+			if ( 0 == strcmp( info->name, key ) )
+			{
+				return NULL;
+			}
+		}
+    }
+
+	if ( flags & COMBINE_VALUES )
+	{
+		for ( info = player->info; info; info = info->next )
+		{
+			if ( 0 == strcmp( info->name, key ) )
+			{
+				char *full_value = (char*)calloc( sizeof(char), strlen( info->value ) + strlen( value ) + 2 );
+				if ( NULL == full_value )
+				{
+					fprintf( stderr, "Failed to malloc combined value\n" );
+					exit( 1 );
+				}
+				sprintf( full_value, "%s%s%s", info->value, multi_delimiter, value );
+
+				// We should be able to free this
+				free( info->value );
+				info->value = full_value;
+
+				return info;
+			}
+		}
+	}
+
+    info = (struct info *) malloc( sizeof( struct info));
+    if ( flags & NO_KEY_COPY)
+	{
+		info->name = key;
+	}
+    else
+	{
+		info->name = strdup(key);
+	}
+    if ( flags & NO_VALUE_COPY)
+	{
+		info->value = value;
+	}
+    else
+	{
+		info->value = strdup(value);
+	}
+    info->next = NULL;
+
+	if ( NULL == player->info )
+	{
+		player->info = info;
+	}
+	else
+	{
+		*player->last_info = info;
+	}
+    player->last_info = &info->next;
+    player->n_info++;
+
+    return info;
+}
+
 struct rule *
 add_rule( struct qserver *server, char *key, char *value, int flags)
 {
@@ -6243,10 +6829,11 @@ add_nrule( struct qserver *server, char *key, char *value, int len)
 }
 
 STATIC struct player *
-add_player( struct qserver *server, int player_number)
+add_player( struct qserver *server, int player_number )
 {
     struct player *player;
-    for ( player= server->players; player; player= player->next)
+
+    for ( player = server->players; player; player = player->next )
     {
 		if ( player->number == player_number)
 		{
@@ -6254,10 +6841,12 @@ add_player( struct qserver *server, int player_number)
 		}
 	}
 
-    player= (struct player *) calloc( 1, sizeof( struct player));
-    player->number= player_number;
-    player->next= server->players;
-    server->players= player;
+    player = (struct player *) calloc( 1, sizeof( struct player));
+    player->number = player_number;
+    player->next = server->players;
+    player->n_info = 0;
+	player->last_info = NULL;
+    server->players = player;
     server->n_player_info++;
     return player;
 }
@@ -6305,7 +6894,8 @@ deal_with_unreal_packet( struct qserver *server, char *rawpkt, int pktlen)
 {
     char *s, *key, *value, *end;
     struct player *player= NULL;
-    int id_major=0, id_minor=0, final=0;
+    int id_major=0, id_minor=0, final=0, player_num;
+	char tmp[256];
 
 	server->n_servers++;
     if ( server->server_name == NULL)
@@ -6444,7 +7034,14 @@ deal_with_unreal_packet( struct qserver *server, char *rawpkt, int pktlen)
 				// details are returned
 				if ( player == NULL && unreal_max_players( server ) )
 				{
-					player= add_player( server, player_number);
+					player = add_player( server, player_number);
+					if ( player )
+					{
+						// init to -1 so we can tell if
+						// we have team info
+						player->team = -1;
+						player->deaths = -999;
+					}
 				}
 			}
 		}
@@ -6495,22 +7092,26 @@ deal_with_unreal_packet( struct qserver *server, char *rawpkt, int pktlen)
 			if ( player && player->number == no )
 			{
 				player->name= strdup( value);
-				player= NULL;
+				player = NULL;
 			}
 			else if ( NULL != ( player = get_player_by_number( server, no ) ) )
 			{
-				player->name= strdup( value);
-				player= NULL;
+				player->name = strdup( value);
+				player = NULL;
 			}
 			// unreal_max_players( server ) due to bf1942 issue
 			// where the actual no players is correct but more player
 			// details are returned
 			else if ( unreal_max_players( server ) )
 			{
-				player= add_player( server, no );
+				player = add_player( server, no );
 				if ( player)
 				{
 					player->name= strdup( value);
+					// init to -1 so we can tell if
+					// we have team info
+					player->team = -1;
+					player->deaths = -999;
 				}
 			}
 		}
@@ -6601,7 +7202,7 @@ deal_with_unreal_packet( struct qserver *server, char *rawpkt, int pktlen)
 			player = get_player_by_number( server, atoi( key+6 ) );
 			if ( NULL != player )
 			{
-				player->score = atoi( value);
+				player->score = atoi( value );
 			}
 		}
 		else if ( player && strncmp( key, "playertype", 10) == 0)
@@ -6620,9 +7221,34 @@ deal_with_unreal_packet( struct qserver *server, char *rawpkt, int pktlen)
 		{
 			// Ensure these dont make it into the rules
 		}
+		else if ( 2 == sscanf( key, "%255[^_]_%d", tmp, &player_num ) )
+		{
+			// arbitary player info
+			player = get_player_by_number( server, player_num );
+			if ( NULL != player )
+			{
+				player_add_info( player, tmp, value, NO_FLAGS );
+			}
+			// unreal_max_players( server ) due to bf1942 issue
+			// where the actual no players is correct but more player
+			// details are returned
+			else if ( unreal_max_players( server ) )
+			{
+				player = add_player( server, player_num );
+				if ( player)
+				{
+					player->name = NULL;
+					// init to -1 so we can tell if
+					// we have team info
+					player->team = -1;
+					player->deaths = -999;
+				}
+				player_add_info( player, tmp, value, NO_FLAGS );
+			}
+		}
 		else
 		{
-			player= NULL;
+			player = NULL;
 			add_rule( server, key, value, NO_FLAGS);
 		}
     }
@@ -7058,6 +7684,7 @@ deal_with_ut2003_packet( struct qserver *server, char *rawpkt, int pktlen)
 	    && packet_header != 0x79 // UT2003 Retail
 	    && packet_header != 0x7e // Unreal2 XMP
 	    && packet_header != 0x7f // UT2004 Demo
+	    && packet_header != 0x80 // UT2004 Retail
 	    )
 	{
 		unsigned int ipaddr = ntohl(server->ipaddr);
@@ -8520,7 +9147,7 @@ deal_with_ravenshield_packet( struct qserver *server, char *rawpkt, int pktlen)
 			// AllowRadar
 			add_rule( server, "AllowRadar", value, NO_FLAGS );
 		}
-		else if ( 0 == strcmp( "D1", key ) )
+		else if ( 0 == strcmp( "D2", key ) )
 		{
 			// Version info
 			add_rule( server, "Version", value, NO_FLAGS );
@@ -8546,7 +9173,8 @@ deal_with_ravenshield_packet( struct qserver *server, char *rawpkt, int pktlen)
 		}
 		else if ( 0 == strcmp( "G1", key ) )
 		{
-			// Unknown
+			// Password
+			add_rule( server, "Password", value, NO_FLAGS );
 		}
 		else if ( 0 == strcmp( "G2", key ) )
 		{
@@ -8558,7 +9186,8 @@ deal_with_ravenshield_packet( struct qserver *server, char *rawpkt, int pktlen)
 		}
 		else if ( 0 == strcmp( "H2", key ) )
 		{
-			// Unknown
+			// Number of Terrorists
+			add_rule( server, "nbTerro", value, NO_FLAGS );
 		}
 		else if ( 0 == strcmp( "I1", key ) )
 		{
@@ -8577,7 +9206,8 @@ deal_with_ravenshield_packet( struct qserver *server, char *rawpkt, int pktlen)
 		}
 		else if ( 0 == strcmp( "J2", key ) )
 		{
-			// Unknown
+			// RotateMap
+			add_rule( server, "RotateMap", value, NO_FLAGS);
 		}
 		else if ( 0 == strcmp( "K1", key ) )
 		{
@@ -8587,8 +9217,8 @@ deal_with_ravenshield_packet( struct qserver *server, char *rawpkt, int pktlen)
 		}
 		else if ( 0 == strcmp( "K2", key ) )
 		{
-			// RotateMap
-			add_rule( server, "RotateMap", value, NO_FLAGS);
+			// Force First Person Weapon
+			add_rule( server, "ForceFPersonWeapon", value, NO_FLAGS);
 		}
 		else if ( 0 == strcmp( "L1", key ) )
 		{
@@ -9372,7 +10002,7 @@ deal_with_descent3_packet( struct qserver *server, char *rawpkt, int pktlen)
 				    &server->packet_time1);
 
     if ( pktlen < 4)  {
-	fprintf( stderr, "short d3 packet\n");
+	fprintf( stderr, "short descent3 packet\n");
 	print_packet( server, rawpkt, pktlen);
 	cleanup_qserver( server, 1);
 	return;
@@ -9670,6 +10300,447 @@ eye_protocol_error:
     cleanup_qserver( server, 1);
 }
 
+static const char doom3_inforesponse[] = "\xFF\xFFinfoResponse";
+static unsigned MAX_DOOM3_ASYNC_CLIENTS = 32;
+
+void
+deal_with_doom3_packet( struct qserver *server, char *rawpkt, int pktlen)
+{
+	char *ptr = rawpkt;
+	char *end = rawpkt + pktlen;
+	int type = 0;
+	unsigned num_players = 0;
+	unsigned challenge = 0;
+	unsigned protocolver = 0;
+	char tmp[32];
+
+	server->n_servers++;
+	if ( server->server_name == NULL)
+	{
+		server->ping_total += time_delta( &packet_recv_time, &server->packet_time1);
+	}
+	else
+	{
+		gettimeofday( &server->packet_time1, NULL);
+	}
+
+	// Check if correct reply
+	if ( pktlen < sizeof(doom3_inforesponse) +4 +4 +1 ||
+		memcmp( doom3_inforesponse, ptr, sizeof(doom3_inforesponse)) != 0 )
+	{
+		malformed_packet(server, "too short or invalid response");
+		cleanup_qserver( server, 1);
+		return;
+	}
+	ptr += sizeof(doom3_inforesponse);
+
+	challenge = swap_long_from_little(ptr);
+	ptr += 4;
+
+	protocolver = swap_long_from_little(ptr);
+	ptr += 4;
+
+	snprintf(tmp, sizeof(tmp), "%u.%u", protocolver >> 16, protocolver & 0xFFFF);
+	debug(2, "challenge: 0x%08X, protocol: %s (0x%X)",
+		challenge, tmp, protocolver);
+
+	if(protocolver >> 16 != 1)
+	{
+		malformed_packet(server, "protocol version != 1");
+		cleanup_qserver( server, 1);
+		return;
+	}
+
+	server->protocol_version = protocolver;
+	add_rule( server, "protocol", tmp, NO_FLAGS );
+
+	while ( ptr < end )
+	{
+		// server info:
+		// name value pairs null seperated
+		// empty name && value signifies the end of section
+		char *key, *val;
+		unsigned keylen, vallen;
+
+		key = ptr;
+		ptr = memchr(ptr, '\0', end-ptr);
+		if ( !ptr )
+		{
+			malformed_packet( server, "no rule key" );
+			cleanup_qserver( server, 1);
+			return;
+		}
+		keylen = ptr - key;
+
+		val = ++ptr;
+		ptr = memchr(ptr, '\0', end-ptr);
+		if ( !ptr )
+		{
+			malformed_packet( server, "no rule value" );
+			cleanup_qserver( server, 1);
+			return;
+		}
+		vallen = ptr - val;
+		++ptr;
+		debug( 2, "key:%s=%s:", key, val);
+
+		if(keylen == 0 && vallen == 0)
+		{
+			type = 1;
+			break; // end
+		}
+
+		// Lets see what we've got
+		if ( 0 == strcasecmp( key, "si_name" ) )
+		{
+			server->server_name = strdup( val );
+		}
+		else if( 0 == strcasecmp( key, "fs_game" ) )
+		{
+			server->game = strdup( val );
+		}
+#if 0
+		else if( 0 == strcasecmp( key, "si_version" ) )
+		{
+			// format:
+			// DOOM 1.0.1262.win-x86 Jul  8 2004 16:46:37
+			server->protocol_version = atoi( val+1 );
+		}
+#endif
+		else if( 0 == strcasecmp( key, "si_map" ) )
+		{
+			server->map_name = strdup( val );
+		}
+		else if( 0 == strcasecmp( key, "si_maxplayers" ) )
+		{
+			server->max_players = atoi( val );
+		}
+
+		add_rule( server, key, val, NO_FLAGS );
+	}
+
+	if ( type != 1 )
+	{
+		// no more info should be player headers here as we
+		// requested it
+		malformed_packet( server, "player info missing" );
+		cleanup_qserver( server, 1);
+		return;
+	}
+
+	// now each player details
+	while( ptr < end )
+	{
+		struct player *player;
+		char *name;
+		unsigned char player_id = *ptr++;
+		short prediction = 0;
+		unsigned rate = 0;
+
+		if(player_id == MAX_DOOM3_ASYNC_CLIENTS)
+			break;
+
+		/* id's are not steady
+		if(player_id != num_players)
+		{
+			malformed_packet(server, "unexpected player id");
+			cleanup_qserver( server, 1);
+			return;
+		}
+		*/
+
+		if ( ptr + 7 > end ) // 2 pred + 4 rate + empty player name ('\0')
+		{
+			// run off the end and shouldnt have
+			malformed_packet( server, "player info too short" );
+			cleanup_qserver( server, 1);
+			return;
+		}
+
+		player = add_player( server, num_players );
+
+		prediction = swap_short_from_little(ptr);
+		ptr += 2;
+
+		player->ping = prediction; // seems to be ping
+
+		rate = swap_long_from_little(ptr);
+		ptr += 4;
+
+		// XXX no idea what's so important about the rate
+
+		name = ptr;
+		ptr = memchr(ptr, '\0', end-ptr);
+		if ( !ptr )
+		{
+			malformed_packet( server, "player name not null terminated" );
+			cleanup_qserver( server, 1);
+			return;
+		}
+		++ptr;
+		player->name = strdup( name );
+		debug( 2, "Player[%d] = %s, prediction %hu, rate %u, id %hhu",
+				num_players, player->name, prediction, rate, player_id);
+
+		++num_players;
+	}
+
+	if(end - ptr == 4)
+	{
+		snprintf(tmp, sizeof(tmp), "0x%X", swap_long_from_little(ptr));
+		add_rule( server, "osmask", tmp, NO_FLAGS );
+		debug( 2, "osmask %s", tmp);
+		ptr += 4;
+	}
+	else
+	{
+		malformed_packet(server, "osmask missing");
+	}
+
+	server->num_players = num_players;
+
+	cleanup_qserver( server, 1 );
+	return;
+}
+
+static const char hl2_statusresponse[] = "\xFF\xFF\xFF\xFF\x49";
+static const char hl2_playersresponse[] = "\xFF\xFF\xFF\xFF\x44";
+static const char hl2_rulesresponse[] = "\xFF\xFF\xFF\xFF\x45";
+static const int hl2_response_size = sizeof(hl2_statusresponse) - 1;
+#define HL2_STATUS 1
+#define HL2_PLAYERS 2
+#define HL2_RULES 3
+
+void
+deal_with_hl2_packet( struct qserver *server, char *rawpkt, int pktlen)
+{
+	char *ptr = rawpkt;
+	char *end = rawpkt + pktlen;
+	char temp[512];
+	int type = 0;
+	unsigned char protocolver = 0;
+	int n_sent = 0;
+
+	server->n_servers++;
+	if ( server->server_name == NULL)
+	{
+		server->ping_total += time_delta( &packet_recv_time, &server->packet_time1);
+	}
+	else
+	{
+		gettimeofday( &server->packet_time1, NULL);
+	}
+
+	// Check if correct reply
+	if ( pktlen < hl2_response_size )
+	{
+		malformed_packet(server, "short response type");
+		cleanup_qserver( server, 1);
+		return;
+	}
+	else
+	{
+		if ( 0 == memcmp( hl2_statusresponse, ptr, hl2_response_size ) )
+		{
+			if ( pktlen < hl2_response_size + 20 )
+			{
+				malformed_packet(server, "short packet");
+				cleanup_qserver( server, 1);
+				return;
+			}
+			type = HL2_STATUS;
+		}
+		else if ( 0 == memcmp( hl2_playersresponse, ptr, hl2_response_size ) )
+		{
+			type = HL2_PLAYERS;
+		}
+		else if ( 0 == memcmp( hl2_rulesresponse, ptr, hl2_response_size ) )
+		{
+			type = HL2_RULES;
+		}
+		else
+		{
+			malformed_packet(server, "unknown response");
+			cleanup_qserver( server, 1);
+			return;
+		}
+	}
+
+	// header
+	ptr += hl2_response_size;
+
+	switch( type )
+	{
+	case HL2_STATUS:
+
+		// protocol version
+		protocolver = *ptr;
+		ptr++;
+
+		debug(2, "protocol: 0x%02X", protocolver );
+		// Commented out till out of beta
+/*
+		if( '\x02' != protocolver )
+		{
+			malformed_packet(server, "protocol version != 0x02");
+			cleanup_qserver( server, 1);
+			return;
+		}
+*/
+
+		server->protocol_version = protocolver;
+		sprintf( temp, "%d", protocolver );
+		add_rule( server, "protocol", temp, NO_FLAGS);
+
+		// server name
+		server->server_name = strdup( ptr );
+		ptr += strlen( ptr ) + 1;
+
+		// map
+		server->map_name = strdup( ptr );
+		ptr += strlen( ptr ) + 1;
+
+		// gamedir
+		server->game = strdup( ptr );
+		add_rule( server, "gamedir", ptr, NO_FLAGS );
+		ptr += strlen( ptr ) + 1;
+
+		// description
+		add_rule( server, "description", ptr, NO_FLAGS );
+		ptr += strlen( ptr ) + 1;
+
+		// appid
+		ptr += 2;
+
+		// num players
+		server->num_players = *ptr;
+		ptr++;
+
+		// max players
+		server->max_players = *ptr;
+		ptr++;
+
+		// bot players
+		sprintf( temp, "%hhu", (*ptr) );
+		add_rule( server, "bot_players", temp, NO_FLAGS );
+		ptr++;
+
+		// dedicated
+		if ( 'd' == *ptr )
+		{
+			add_rule( server, "sv_type", "dedicated", NO_FLAGS );
+		}
+		else if ( 'l' == *ptr )
+		{
+			add_rule( server, "sv_type", "listen", NO_FLAGS );
+		}
+		else
+		{
+			char tmp[2] = { *ptr, '\0' };
+			add_rule( server, "sv_type", tmp, NO_FLAGS );
+		}
+		ptr++;
+
+		// OS
+		if ( 'l' == *ptr )
+		{
+			add_rule( server, "sv_os", "linux", NO_FLAGS );
+		}
+		else if ( 'w' == *ptr )
+		{
+			add_rule( server, "sv_os", "windows", NO_FLAGS );
+		}
+		else
+		{
+			char tmp[2] = { *ptr, '\0' };
+			add_rule( server, "sv_os", tmp, NO_FLAGS );
+		}
+		ptr++;
+
+		// passworded
+		add_rule( server, "sv_password", *ptr ? "1" : "0", NO_FLAGS);
+		ptr++;
+
+		// secure
+		add_rule( server, "secure", *ptr ? "1" : "0", NO_FLAGS);
+		ptr++;
+
+		// send the other request packets if wanted
+		if ( get_server_rules )
+		{
+			send_rule_request_packet( server );
+			n_sent++;
+		}
+		else if ( get_player_info )
+		{
+			send_player_request_packet( server ) ;
+			n_sent++;
+		}
+		break;
+
+	case HL2_RULES:
+		// num_players
+		ptr++;
+
+		// max_players
+		ptr++;
+		while ( ptr < end )
+		{
+			char *var = ptr;
+			char *val;
+			ptr += strlen( var ) + 1;
+			val = ptr;
+			ptr += strlen( val ) + 1;
+			add_rule( server, var, val, NO_FLAGS );
+		}
+
+		if ( get_player_info )
+		{
+			send_player_request_packet( server ) ;
+			n_sent++;
+		}
+		break;
+
+	case HL2_PLAYERS:
+		// num_players
+		ptr++;
+
+		while ( ptr < end )
+		{
+			struct player *player = add_player( server, server->n_player_info );
+
+			// player no
+			ptr++;
+
+			// name
+			player->name = strdup( ptr );
+			ptr += strlen( ptr ) + 1;
+
+			// frags
+			player->frags = swap_long_from_little( ptr );
+			ptr += 4;
+
+			// time
+			player->connect_time = swap_float_from_little( ptr );
+			ptr += 4;
+		}
+
+		break;
+
+	default:
+		malformed_packet( server, "unknown response" );
+		cleanup_qserver( server, 1);
+		return;
+	}
+
+
+	if ( 0 == n_sent )
+	{
+		cleanup_qserver( server, 1 );
+	}
+	return;
+}
+
 // See the following for protocol details:
 // http://dev.kquery.com/index.php?article=42
 void
@@ -9852,6 +10923,7 @@ deal_with_gs2_packet( struct qserver *server, char *rawpkt, int pktlen)
 			int i;
 			for ( i = 0; i < no_headers; i++ )
 			{
+				char *header = headers[i];
 				char *val;
 				int val_len;
 
@@ -9866,29 +10938,38 @@ deal_with_gs2_packet( struct qserver *server, char *rawpkt, int pktlen)
 				ptr += val_len + 1;
 
 				// lets see what we got
-				if ( 0 == strcmp( headers[i], "player_" ) )
+				if ( 0 == strcmp( header, "player_" ) )
 				{
 					player->name = strdup( val );
 				}
-				else if ( 0 == strcmp( headers[i], "score_" ) )
+				else if ( 0 == strcmp( header, "score_" ) )
 				{
 					player->score = atoi( val );
 				}
-				else if ( 0 == strcmp( headers[i], "deaths_" ) )
+				else if ( 0 == strcmp( header, "deaths_" ) )
 				{
 					player->deaths = atoi( val );
 				}
-				else if ( 0 == strcmp( headers[i], "ping_" ) )
+				else if ( 0 == strcmp( header, "ping_" ) )
 				{
 					player->ping = atoi( val );
 				}
-				else if ( 0 == strcmp( headers[i], "kills_" ) )
+				else if ( 0 == strcmp( header, "kills_" ) )
 				{
 					player->frags = atoi( val );
 				}
-				else if ( 0 == strcmp( headers[i], "team_" ) )
+				else if ( 0 == strcmp( header, "team_" ) )
 				{
 					player->team = atoi( val );
+				}
+				else
+				{
+					int len = strlen( header );
+					if ( '_' == header[len-1] )
+					{
+						header[len-1] = '\0';
+					}
+					player_add_info( player, header, val, NO_FLAGS );
 				}
 
 				//fprintf( stderr, "Player[%d][%s]=%s\n", total_players, headers[i], val );
@@ -10128,7 +11209,7 @@ swap_long_from_little( void *l)
 }
 
 float
-swap_float_from_little( void *f)
+swap_float_from_little( void *f )
 {
 	union {
 		int i;
@@ -10149,6 +11230,15 @@ swap_short_from_little( void *l)
     else
 	result= (unsigned short)b[0] | ((unsigned short)b[1]<<8);
     return result;
+}
+
+/** write four byte to buf */
+void put_long_little(unsigned val, char* buf)
+{
+	buf[0] = val & 0xFF;
+	buf[1] = (val >> 8) & 0xFF;
+	buf[2] = (val >> 16) & 0xFF;
+	buf[3] = (val >> 24) & 0xFF;
 }
 
 #define MAXSTRLEN 2048
@@ -10606,39 +11696,6 @@ set_non_blocking( int fd)
 #endif
 }
 
-void
-print_packet( struct qserver *server, char *buf, int buflen)
-{
-    static char *hex= "0123456789abcdef";
-    unsigned char *p= (unsigned char*)buf;
-    int i, h, a, b, offset= 0;
-    char line[256];
-
-    if ( server != NULL)
-	fprintf( stderr, "FROM %s\n", server->arg);
-
-    for ( i= buflen; i ; offset+= 16)  {
-	memset( line, ' ', 256);
-	h= 0;
-	h+= sprintf( line, "%5d:", offset);
-	a= h + 16*2 + 16/4 + 2;
-	for ( b=16; b && i; b--, i--, p++)  {
-	    if ( (b & 3) == 0)
-		line[h++]= ' ';
-	    line[h++]= hex[*p >> 4];
-	    line[h++]= hex[*p & 0xf];
-	    if ( isprint( *p))
-		line[a++]= *p;
-	    else
-		line[a++]= '.';
-	}
-	line[a]= '\0';
-	fputs( line, stderr);
-	fputs( "\n", stderr);
-    }
-    fputs( "\n", stderr);
-}
-
 char *
 quake_color( int color)
 {
@@ -10717,7 +11774,7 @@ quake_color( int color)
 }
 
 
-char *
+const char *
 unreal_color( int color )
 {
 	if ( color_names )
@@ -11020,3 +12077,4 @@ qpartition( void **array, int a, int b, int (*compare)(void*,void*))
     }
 }
 
+// vim: sw=8 ts=8 noet

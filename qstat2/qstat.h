@@ -7,13 +7,17 @@
  * Copyright 1996,1997,1998,1999,2000,2001,2002 by Steve Jankowski
  */
 
+#ifndef __H_QSTAT
+#define __H_QSTAT
+
+#ifdef HAVE_CONFIG_H
+#include "gnuconfig.h"
+#endif
+
 #ifdef _WIN32
 #else
 #define _ISUNIX
 #endif
-
-#ifndef __H_QSTAT
-#define __H_QSTAT
 
 #ifdef __EMX__
 #include <sys/select.h>
@@ -25,12 +29,43 @@
 
 #ifdef _ISUNIX
 #include <sys/time.h>
+#define SOCKET_ERROR -1
 #endif
 
 #ifdef _WIN32
-#define FD_SETSIZE 256
-#include <winsock.h>
-#endif
+# include <sys/timeb.h>
+# include <winsock.h>
+# define PATH_MAX MAX_PATH
+# include <fcntl.h>
+# define _POSIX_ 1
+# ifndef FD_SETSIZE
+#  define FD_SETSIZE 256
+# endif
+# define close(a) closesocket(a)
+static int gettimeofday(struct timeval *now, void *blah)
+{
+    struct timeb timeb;
+    ftime( &timeb);
+    now->tv_sec= timeb.time;
+    now->tv_usec= (unsigned int)timeb.millitm * 1000;
+    return 0;
+}
+# define sockerr()	WSAGetLastError()
+# define strcasecmp      stricmp
+# define strncasecmp     strnicmp
+# define STATIC
+# ifndef EADDRINUSE
+#  define EADDRINUSE	WSAEADDRINUSE
+# endif
+# define snprintf _snprintf
+#endif /* _WIN32 */
+
+#include <string.h>
+
+typedef struct _server_type server_type;
+
+#include "qserver.h"
+#include "ut2004.h"
 
 /* Various magic numbers.
  */
@@ -72,7 +107,12 @@
 #define RAVENSHIELD_DEFAULT_PORT	8777
 #define SAVAGE_DEFAULT_PORT	11235
 #define FARCRY_DEFAULT_PORT	49001
-#define STEAM_MASTER_DEFAULT_PORT	27010 
+#define STEAM_MASTER_DEFAULT_PORT	27010
+#define DOOM3_DEFAULT_PORT	27666
+#define DOOM3_MASTER_DEFAULT_PORT	27650
+#define HL2_DEFAULT_PORT	27015
+#define HL2_MASTER_DEFAULT_PORT	27011
+
 
 #define Q_UNKNOWN_TYPE 0
 #define MASTER_SERVER 0x40000000
@@ -120,8 +160,13 @@
 #define STEAM_MASTER (41|MASTER_SERVER)
 #define JK3_SERVER 42
 #define JK3_MASTER (43|MASTER_SERVER)
+#define DOOM3_SERVER 44
+#define DOOM3_MASTER (45|MASTER_SERVER)
+#define HL2_SERVER 46
+#define HL2_MASTER (47|MASTER_SERVER)
+#define UT2004_MASTER (48|MASTER_SERVER)
 
-#define LAST_BUILTIN_SERVER  43
+#define LAST_BUILTIN_SERVER  48
 
 #define TF_SINGLE_QUERY		(1<<1)
 #define TF_OUTFILE		(1<<2)
@@ -141,9 +186,10 @@
 #define TF_NO_PORT_OFFSET	(1<<14)
 #define TF_SHOW_GAME_PORT	(1<<15)
 
+#define TF_MASTER_STEAM		(1<<16)  /* supports steam server filter */
+
 #define TRIBES_TEAM	-1
 
-struct qserver;
 struct q_packet;
 
 typedef void (*DisplayFunc)( struct qserver *);
@@ -173,6 +219,8 @@ void display_farcry_player_info( struct qserver *server);
 void display_ghostrecon_player_info( struct qserver *server);
 void display_eye_player_info( struct qserver *server);
 void display_gs2_player_info( struct qserver *server);
+void display_doom3_player_info( struct qserver *server);
+void display_hl2_player_info( struct qserver *server);
 
 void raw_display_server( struct qserver *server);
 void raw_display_server_rules( struct qserver *server);
@@ -192,6 +240,8 @@ void raw_display_descent3_player_info( struct qserver *server);
 void raw_display_ghostrecon_player_info( struct qserver *server);
 void raw_display_eye_player_info( struct qserver *server);
 void raw_display_gs2_player_info( struct qserver *server);
+void raw_display_doom3_player_info( struct qserver *server);
+void raw_display_hl2_player_info( struct qserver *server);
 
 void xml_display_server( struct qserver *server);
 void xml_header();
@@ -213,6 +263,8 @@ void xml_display_descent3_player_info( struct qserver *server);
 void xml_display_ghostrecon_player_info( struct qserver *server);
 void xml_display_eye_player_info( struct qserver *server);
 void xml_display_gs2_player_info( struct qserver *server);
+void xml_display_doom3_player_info( struct qserver *server);
+void xml_display_hl2_player_info( struct qserver *server);
 char *xml_escape( char*);
 char *str_replace( char *, char *, char *);
 
@@ -235,6 +287,8 @@ void send_tribes2master_request_packet( struct qserver *server);
 void send_ghostrecon_request_packet( struct qserver *server);
 void send_eye_request_packet( struct qserver *server);
 void send_gs2_request_packet( struct qserver *server);
+void send_doom3_request_packet( struct qserver *server);
+void send_hl2_request_packet( struct qserver *server);
 
 void deal_with_packet( struct qserver *server, char *pkt, int pktlen);
 void deal_with_q_packet( struct qserver *server, char *pkt, int pktlen);
@@ -242,6 +296,7 @@ void deal_with_qw_packet( struct qserver *server, char *pkt, int pktlen);
 void deal_with_q1qw_packet( struct qserver *server, char *pkt, int pktlen);
 void deal_with_q2_packet( struct qserver *server, char *pkt, int pktlen,
 	int check_duplicate_rules);
+void deal_with_doom3master_packet( struct qserver *server, char *rawpkt, int pktlen);
 void deal_with_qwmaster_packet( struct qserver *server, char *pkt, int pktlen);
 int deal_with_halflife_packet( struct qserver *server, char *pkt, int pktlen);
 void deal_with_unreal_packet( struct qserver *server, char *pkt, int pktlen);
@@ -260,8 +315,10 @@ void deal_with_descent3master_packet( struct qserver *server, char *pkt, int pkt
 void deal_with_ghostrecon_packet( struct qserver *server, char *pkt, int pktlen);
 void deal_with_eye_packet( struct qserver *server, char *pkt, int pktlen);
 void deal_with_gs2_packet( struct qserver *server, char *pkt, int pktlen);
+void deal_with_doom3_packet( struct qserver *server, char *pkt, int pktlen);
+void deal_with_hl2_packet( struct qserver *server, char *pkt, int pktlen);
 
-typedef struct _server_type  {
+struct _server_type  {
     int id;
     char *type_prefix;
     char *type_string;
@@ -293,7 +350,7 @@ typedef struct _server_type  {
     QueryFunc player_query_func;
     QueryFunc rule_query_func;
     PacketFunc packet_func;
-} server_type;
+};
 
 extern server_type builtin_types[];
 extern server_type *types;
@@ -360,6 +417,18 @@ struct {
 } q3_serverinfo =
 { { '\377', '\377', '\377', '\377' }, { 'g', 'e', 't', 'i', 'n', 'f', 'o', '\n' } };
 
+/* DOOM 3 */
+struct {
+    char prefix[2];
+    char command[12];
+} doom3_serverinfo =
+{ { '\377', '\377' }, { 'g', 'e', 't', 'I', 'n', 'f', 'o', '\0', '\0', '\0', '\0', '\0' } };
+
+/* HALF-LIFE 2 */
+char hl2_serverinfo[20] = { '\xFF', '\xFF', '\xFF', '\xFF', 'T', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0' };
+char hl2_playerinfo[20] = { '\xFF', '\xFF', '\xFF', '\xFF', 'U', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0' };
+char hl2_ruleinfo[20] = { '\xFF', '\xFF', '\xFF', '\xFF', 'V', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0' };
+
 /* HEXEN WORLD */
 struct {
     char prefix[5];
@@ -411,6 +480,9 @@ char q2_masterquery[] = { 'q', 'u', 'e', 'r', 'y', '\n', '\0' };
 char q3_master_query_template[] = "\377\377\377\377getservers %s %s";
 char q3_master_default_protocol[] = "67";
 char q3_master_default_query[] = "empty full demo\n";
+
+char doom3_master_query[] = "\xFF\xFFgetServers\x00\x21\x00\x01\x00\x00";
+//                                             ^^^^^^^^^^^^^^^^ version
 
 /* RETURN TO CASTLE WOLFENSTEIN */
 char rtcw_master_default_protocol[] = "60";
@@ -542,7 +614,7 @@ unsigned char gs2_status_query[] = {
 // 2. Region ( 1 byte )
 // 3. ip ( string + null )
 // 4. Filter ( optional + null )
-// 
+//
 // Regions:
 // 0 = US East Coast
 // 1 = US West Coast
@@ -564,15 +636,15 @@ unsigned char gs2_status_query[] = {
 //
 // \map\[map] = Returns servers running the specified map
 // (e.g. de_dust2 or cs_italy)
-// 
+//
 // \linux\1 = Servers running on the Linux platform
-// 
+//
 // \empty\1 = Servers that are not empty
-// 
+//
 // \full\1 = Servers that are not full
-// 
+//
 // \proxy\1 = Servers that are spectator proxies
-// 
+//
 // End the filter with 0x00
 //
 unsigned char steam_masterquery_template[] = "1%c%s%c%s";
@@ -795,6 +867,74 @@ server_type builtin_types[] = {
     NULL,			/* rule_query_func */
     NULL,			/* player_query_func */
     deal_with_qw_packet,	/* packet_func */
+},
+{
+    /* DOOM 3 */
+    DOOM3_SERVER,					/* id */
+    "DM3S",							/* type_prefix */
+    "dm3s",							/* type_string */
+    "-dm3s",						/* type_option */
+    "Doom 3",						/* game_name */
+    0,								/* master */
+    DOOM3_DEFAULT_PORT,				/* default_port */
+    0,								/* port_offset */
+    TF_QUAKE3_NAMES,				/* flags */
+    "fs_game",						/* game_rule */
+    "DOOM3",						/* template_var */
+    (char*) &doom3_serverinfo,		/* status_packet */
+    sizeof( doom3_serverinfo),		/* status_len */
+    NULL,							/* player_packet */
+    0,								/* player_len */
+    NULL,							/* rule_packet */
+    0,								/* rule_len */
+    NULL,							/* master_packet */
+    0,								/* master_len */
+    NULL,							/* master_protocol */
+    NULL,							/* master_query */
+    display_doom3_player_info,		/* display_player_func */
+    display_server_rules,			/* display_rule_func */
+    raw_display_doom3_player_info,	/* display_raw_player_func */
+    raw_display_server_rules,		/* display_raw_rule_func */
+    xml_display_doom3_player_info,	/* display_xml_player_func */
+    xml_display_server_rules,		/* display_xml_rule_func */
+    send_qwserver_request_packet,	/* status_query_func */
+    NULL,							/* rule_query_func */
+    NULL,							/* player_query_func */
+    deal_with_doom3_packet,			/* packet_func */
+},
+{
+    /* HALFLIFE 2 */
+    HL2_SERVER,						/* id */
+    "HL2S",							/* type_prefix */
+    "hl2s",							/* type_string */
+    "-hl2s",						/* type_option */
+    "Half-Life 2",					/* game_name */
+    0,								/* master */
+    HL2_DEFAULT_PORT,				/* default_port */
+    0,								/* port_offset */
+    TF_QUAKE3_NAMES,				/* flags */
+    "",								/* game_rule */
+    "HL2",							/* template_var */
+    (char*) &hl2_serverinfo,		/* status_packet */
+    sizeof( hl2_serverinfo),		/* status_len */
+    (char*) &hl2_playerinfo,		/* player_packet */
+    sizeof( hl2_playerinfo),		/* player_len */
+    (char*) &hl2_ruleinfo,			/* rule_packet */
+    sizeof( hl2_ruleinfo),			/* rule_len */
+    NULL,							/* master_packet */
+    0,								/* master_len */
+    NULL,							/* master_protocol */
+    NULL,							/* master_query */
+    display_hl2_player_info,		/* display_player_func */
+    display_server_rules,			/* display_rule_func */
+    raw_display_hl2_player_info,	/* display_raw_player_func */
+    raw_display_server_rules,		/* display_raw_rule_func */
+    xml_display_hl2_player_info,	/* display_xml_player_func */
+    xml_display_server_rules,		/* display_xml_rule_func */
+    send_hl2_request_packet,		/* status_query_func */
+    send_rule_request_packet,		/* rule_query_func */
+    send_player_request_packet,		/* player_query_func */
+    deal_with_hl2_packet,			/* packet_func */
 },
 {
     /* RETURN TO CASTLE WOLFENSTEIN */
@@ -1720,6 +1860,40 @@ server_type builtin_types[] = {
     deal_with_qwmaster_packet,	/* packet_func */
 },
 {
+    /* DOOM 3 MASTER */
+    DOOM3_MASTER,			/* id */
+    "DM3M",			/* type_prefix */
+    "dm3m",			/* type_string */
+    "-dm3m",			/* type_option */
+    "Doom 3 Master",		/* game_name */
+    DOOM3_SERVER,			/* master */
+    DOOM3_MASTER_DEFAULT_PORT,	/* default_port */
+    0,				/* port_offset */
+    TF_OUTFILE|TF_QUERY_ARG,	/* flags */
+    "",				/* game_rule */
+    "DOOM3MASTER",			/* template_var */
+    NULL,			/* status_packet */
+    0,				/* status_len */
+    NULL,			/* player_packet */
+    0,				/* player_len */
+    NULL,			/* rule_packet */
+    0,				/* rule_len */
+    doom3_master_query,	/* master_packet */
+    sizeof(doom3_master_query),/* master_len */
+    NULL,	/* master_protocol */
+    NULL,	/* master_query */
+    display_qwmaster,		/* display_player_func */
+    NULL,	/* display_rule_func */
+    NULL,	/* display_raw_player_func */
+    NULL,	/* display_raw_rule_func */
+    NULL,	/* display_xml_player_func */
+    NULL,	/* display_xml_rule_func */
+    send_qwmaster_request_packet,/* status_query_func */
+    NULL,			/* rule_query_func */
+    NULL,			/* player_query_func */
+    deal_with_doom3master_packet,	/* packet_func */
+},
+{
     /* RETURN TO CASTLE WOLFENSTEIN MASTER */
     RTCW_MASTER,		/* id */
     "RWM",			/* type_prefix */
@@ -2001,7 +2175,7 @@ server_type builtin_types[] = {
     HL_SERVER,			/* master */
     STEAM_MASTER_DEFAULT_PORT,	/* default_port */
     0,				/* port_offset */
-    TF_SINGLE_QUERY|TF_OUTFILE|TF_QUERY_ARG, /* flags */
+    TF_SINGLE_QUERY|TF_OUTFILE|TF_QUERY_ARG|TF_MASTER_STEAM, /* flags */
     "",				/* game_rule */
     "STEAMMASTER",			/* template_var */
     NULL,			/* status_packet */
@@ -2025,6 +2199,42 @@ server_type builtin_types[] = {
     NULL,			/* player_query_func */
     deal_with_qwmaster_packet,	/* packet_func */
 },
+
+{
+    /* UT2004 MASTER */
+    UT2004_MASTER,		/* id */
+    "UT2004M",			/* type_prefix */
+    "ut2004m",			/* type_string */
+    "-ut2004m",			/* type_option */
+    "UT2004 Master",		/* game_name */
+    UT2003_SERVER,		/* master */
+    28902,			/* default_port */
+    0,				/* port_offset */
+    TF_OUTFILE|TF_QUERY_ARG|TF_TCP_CONNECT,	/* flags */
+    "",				/* game_rule */
+    "UT2004MASTER",		/* template_var */
+    NULL,			/* status_packet */
+    0,				/* status_len */
+    NULL,			/* player_packet */
+    0,				/* player_len */
+    NULL,			/* rule_packet */
+    0,				/* rule_len */
+    NULL,			/* master_packet */
+    0,				/* master_len */
+    NULL,	/* master_protocol */
+    NULL,	/* master_query */
+    display_qwmaster,		/* display_player_func */
+    NULL,	/* display_rule_func */
+    NULL,	/* display_raw_player_func */
+    NULL,	/* display_raw_rule_func */
+    NULL,	/* display_xml_player_func */
+    NULL,	/* display_xml_rule_func */
+    send_ut2004master_request_packet,/* status_query_func */
+    NULL,			/* rule_query_func */
+    NULL,			/* player_query_func */
+    deal_with_ut2004master_packet,	/* packet_func */
+},
+
 {
     Q_UNKNOWN_TYPE,		/* id */
     "",				/* type_prefix */
@@ -2070,82 +2280,6 @@ struct player;
 #define FLAG_PLAYER_TEAMS	(1<<2)
 #define FLAG_DO_NOT_FREE_GAME	(1<<3)
 
-struct query_param  {
-    char *key;
-    char *value;
-    int i_value;
-    unsigned int ui_value;
-    struct query_param *next;
-};
-
-typedef struct SavedData  {
-    char *data;
-    int datalen;
-    int pkt_index;
-    int pkt_max;
-    unsigned int pkt_id;
-    struct SavedData *next;
-} SavedData;
-
-struct qserver {
-    char *arg;
-    char *host_name;
-    unsigned int ipaddr;
-    int flags;
-    server_type * type;
-    int fd;
-    char *outfilename;
-    char *query_arg;
-    struct query_param *params;
-    unsigned short port;
-    /** how much retries are _left_ for status query or rule query. That means
-     * if s->retry1 == (global)n_retries then no retries were necessary so far.
-     * if s->retry1 == 0 then the server has to be cleaned up -- ln */
-    int retry1;
-    /** how much retries are _left_ for player query. @see retry1 -- ln */
-    int retry2;
-    /** how much retry packets were sent -- ln */
-    int n_retries;
-    /** time when the first packet to the server was sent -- ln */
-    struct timeval packet_time1;
-    struct timeval packet_time2;
-    int ping_total;		/* average is ping_total / n_requests */
-    int n_requests;
-    int n_packets;
-
-    int n_servers;
-    int master_pkt_len;
-    char *master_pkt;
-	// used for progressive master 4 bytes for WON 22 for Steam
-    char master_query_tag[22];
-    char *error;
-
-    /** in-game name of the server. A server that has a NULL name is considered
-     * down. -- ln */
-    char *server_name;
-    char *address;
-    char *map_name;
-    char *game;
-    int max_players;
-    int num_players;
-    int protocol_version;
-
-    SavedData saved_data;
-
-    int next_player_info;
-    int n_player_info;
-    struct player *players;
-
-    char *next_rule;
-    int n_rules;
-    struct rule *rules;
-    struct rule **last_rule;
-    int missing_rules;
-
-    struct qserver *next;
-    struct qserver *prev;
-};
-
 #define PLAYER_TYPE_NORMAL	1
 #define PLAYER_TYPE_BOT		2
 #define PLAYER_TYPE_ALIAS	4
@@ -2174,6 +2308,13 @@ struct player  {
     int ship;		/* BFRIS only */
     int room;		/* BFRIS only */
     int deaths;		/* Descent3 only */
+
+	char *next_info;
+	int n_info;
+	struct info *info;
+	struct info **last_info;
+	int missing_rules;
+
     struct player *next;
 };
 
@@ -2183,6 +2324,12 @@ struct rule  {
     struct rule *next;
 };
 
+struct info  {
+    char *name;
+    char *value;
+    struct info *next;
+};
+
 extern char *qstat_version;
 extern char *DOWN;
 extern char *SYSERROR;
@@ -2190,6 +2337,10 @@ extern char *TIMEOUT;
 extern char *MASTER;
 extern char *SERVERERROR;
 extern char *HOSTNOTFOUND;
+
+extern int n_retries;
+
+extern struct timeval packet_recv_time;
 
 #define DEFAULT_RETRIES			3
 #define DEFAULT_RETRY_INTERVAL		500	/* milli-seconds */
@@ -2208,7 +2359,7 @@ extern int second_sort_key;
 extern int time_format;
 
 extern int color_names;
-
+extern int show_errors;
 
 /* Definitions for the original Quake network protocol.
  */
@@ -2348,5 +2499,11 @@ unsigned long hcache_lookup_hostname( char *hostname);
 char * hcache_lookup_ipaddr( unsigned long ipaddr);
 void hcache_write_file( char *filename);
 void hcache_update_file();
+
+unsigned int swap_long_from_little( void *l);
+unsigned short swap_short_from_little( void *l);
+
+/** \brief write four bytes in little endian order */
+void put_long_little(unsigned val, char* buf);
 
 #endif

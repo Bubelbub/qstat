@@ -113,6 +113,7 @@ for the supported game types.  The type string is used with the
 <tr><td>-q2s<td>q2s<td>27910<td>Quake II
 <tr><td>-uns<td>uns<td>7777<td>Unreal
 <tr><td>-ut2s<td>ut2s<td>7777<td>Unreal Tournament 2003
+<tr><td>-ut2004m<td>ut2004m<td>28902<td>Unreal Tournament 2004 Master <b>requires CD Key</b>
 <tr><td>-hls<td>hls<td>27015<td>Half-Life
 <tr><td>-sns<td>sns<td>22450<td>Sin
 <tr><td>-sgs<td>sgs<td>27888<td>Shogo: Mobile Armor Division
@@ -126,6 +127,8 @@ for the supported game types.  The type string is used with the
 <tr><td>-t2m<td>t2m<td>28002<td>Tribes 2 master
 <tr><td>-q3s<td>q3s<td>27960<td>Quake III
 <tr><td>-q3m<td>q3m<td>27950<td>Quake III master
+<tr><td>-dm3s<td>dm3s<td>27666<td>Doom 3
+<tr><td>-dm3m<td>dm3m<td>27650<td>Doom 3 master
 <tr><td>-bfs<td>bfs<td>44001<td>BFRIS
 <tr><td>-kps<td>kps<td>31510<td>Kingpin
 <tr><td>-hrs<td>hrs<td>28910<td>Heretic II
@@ -288,11 +291,13 @@ I know about.
 <tr><td>Half-Life (stm)<td>steam1.steampowered.com:27010, steam2.steampowered.com:27010
 <tr><td>Tribes<td>tribes.dynamix.com
 <tr><td>Quake III<td>master3.idsoftware.com
+<tr><td>Doom 3<td>idnet.ua-corp.com
 <tr><td>Gamespy<td>master0.gamespy.com
 <tr><td>Tribes 2<td>211.233.32.77:28002, 217.6.160.205:28002
 <tr><td>Descent 3<td>gt.pxo.net
 <tr><td>Return to Castle Wolfenstein<td>wolfmaster.idsoftware.com
 <tr><td>Star Trek: Elite Force<td>master.stef1.ravensoft.com
+<tr><td>UT2004<td>ut2004master1.epicgames.com, ut2004master2.epicgames.com, ut2004master3.epicgames.com
 </table>
 
 <H4>Gamespy Master</H4>
@@ -470,6 +475,71 @@ dedicated servers that are not empty, specify <b>status=dedicated:notempty</b>
 
 See the Tribes 2 master server above for example usage.
 
+<H4>Doom 3 Master</H4>
+
+The Doom 3 master server supports a number of filtering options.
+You can set these filters with QStat by appending query arguments
+to the server type.  The general syntax is:
+<blockquote>
+<b>hlm,</b><i>query-arg</i><b>=</b><i>value</i><b>,</b> ...
+</blockquote>
+<table border=1>
+<tr><th>Query Argument</th><th>Values</th><th>Description</th></tr>
+<tr><td>status</td><td><i>colon separated list</i> of password, nopassword, notfull, notfullnotempty</td>
+<td>Limit servers to those matching this status.  The list is
+one or more status flags separated by colons (':'). To filter on
+servers without password that are not full, specify <b>status=nopassword:notfull</b></td></tr>
+<tr><td>gametype</td><td><i>one of</i> dm, tdm or tourney</td>
+<td>limit servers to those mathing the specified gametype</td></tr>
+</table>
+
+See the Tribes 2 master server above for example usage.<br>
+A special option is a number major.minor which specifies the protocol version.
+
+<H4>UT2004 Master</H4>
+
+The UT2004 master server supports a number of filtering options.
+You can set these filters with QStat by appending query arguments
+to the server type. The general syntax is:
+
+<blockquote>
+  <b>hlm,</b><i>query-arg</i><b>=</b><i>value</i><b>,</b> ...
+</blockquote>
+<table border=1>
+  <tr>
+    <th>Query Argument</th>
+    <th>Values</th>
+    <th>Description</th>
+  </tr>
+  <tr>
+    <td><b>cdkey</b></td>
+    <td>path to the UT2004 cdkey file</td>
+    <td>You MUST specify a valid CD key to be able to query the master server</td>
+  </tr>
+  <tr>
+    <td>status</td>
+    <td><i>colon separated list</i> of password, nopassword, notfull, notempty,
+      standard, nostandard, nobots, stats, nostats, weaponstay, noweaponstay,
+      transloc, notransloc</td>
+    <td>Limit servers to those matching this status.  The list is one or more
+      status flags separated by colons (':'). To filter on standard servers
+      without password that are not full, specify
+      <b>status=standard:nopassword:notfull</b></td>
+  </tr>
+  <tr>
+    <td>gametype</td>
+    <td>any UT2004 gametype, e.g. xMutantGame</td>
+    <td>limit servers to those mathing the specified gametype</td>
+  </tr>
+  <tr>
+    <td>mutator</td>
+    <td><i>colon separated list</i> of Mutators.</td>
+    <td>limit servers to those running the specified mutators. Prepend a dash
+      to include servers that do NOT run the specified mutator</td>
+  </tr>
+</table>
+
+See the Tribes 2 master server above for example usage.<br>
 
 <H4>Option Usage</H4>
 
@@ -733,12 +803,17 @@ type strings.
 	additional field, the unresolved server address, is added at the
 	beginning of all raw output lines.
 
-<dt><b>-progress</b><dd>
+<dt><b>-progress<i>,count</i></b><dd>
 	Print a progress meter.  Displays total servers processed,
 	including timeouts and down servers.  The meter is just a
 	line of text that writes over itself with &lt;cr&gt;.  Handy
 	for interactive use when you are redirecting output to
-	a file (the meter is printed on stderr).
+	a file (the meter is printed on stderr).<br>
+	By default, the progress meter is updated for every server.
+	The updates can be limited by appending <i>,count</i> to
+	the option where <i>count</i> is a number.  The meter
+	will be updated every <i>count</i> servers.  For example,
+	-progress,10 will update every ten servers.
 
 <dt><b>-Tserver</b><i> file</i><br>
 <dt><b>-Tplayer</b><i> file</i><br>
@@ -1594,6 +1669,26 @@ query parameters will be ignored.
 <table border=1>
 <tr valign=top><td>name<td>Sets the name of the game type.  Should be the full game
 name as used by the publisher.
+<tr><td>flags<td>set the query flags. Bitwise OR of the following constants:
+	<ul>
+	    <li>TF_SINGLE_QUERY</li>
+	    <li>TF_OUTFILE</li>
+	    <li>TF_MASTER_MULTI_RESPONSE</li>
+	    <li>TF_TCP_CONNECT</li>
+	    <li>TF_QUERY_ARG</li>
+	    <li>TF_QUERY_ARG_REQUIRED</li>
+	    <li>TF_QUAKE3_NAMES</li>
+	    <li>TF_TRIBES2_NAMES</li>
+	    <li>TF_SOF_NAMES</li>
+	    <li>TF_U2_NAMES</li>
+	    <li>TF_RAW_STYLE_QUAKE</li>
+	    <li>TF_RAW_STYLE_TRIBES</li>
+	    <li>TF_RAW_STYLE_GHOSTRECON</li>
+	    <li>TF_NO_PORT_OFFSET</li>
+	    <li>TF_SHOW_GAME_PORT</li>
+	</ul>
+    </td>
+</tr>
 <tr><td>default&nbsp;port<td>Default network port used by the status protocol.
 <tr><td>status&nbsp;port&nbsp;offset<td>Offset of the status/query port from the game port.
 <tr><td>game&nbsp;rule<td>The server rule containing the name of the game style or game mod.

@@ -1,63 +1,101 @@
-QStat version 2.5c+CVS.2
-** UPDATED for 2.5c+CVS.2 **
-Nov 11, 2003
-Fixes
------
-Updated UT2003 Protocol
-	Updated to correctly support XMP including text coloring
-Update SOF Protocol
-	Now supports coloring of server names
+QStat version 2.8
 
+** UPDATED for 2.8 **
+Feb XX, 2005
 
-QStat version 2.5c+CVS.1
-** UPDATED for 2.5c+CVS.1 **
-Nov 11, 2003
-Fixes
------
-Updated GameSpy Server Protocol
-	Fixes stall on processing BF1942 v1.5 packets
-Update All Seeing Eye Protocol
-	Adds gametype to both standard output and rules
-
-
-QStat version 2.5c+CVS+
-** UPDATED for 2.5c+CVS+ **
-Oct 17, 2003
 Summary of New Features
 -----------------------
-Merged 2.5c+ with 2.5c+CVS
-All the features from 2.5c+ combined with those from CVS
-Which includes ASE support
+
+add derived type STMHL2 for steam master returning hl2s instead of hls
+change timing for sending packets to improve ping times with of ping servers
 
 Fixes
 -----
-Updated GameSpy Server Protocol
-	Updated to better handle player information so that it
-	correctly parses Halo output.
+fix ut2004 master server support
+
+--
+Steve Jankowski
+Steven Hartland
+Ludwig Nussel
 
 
-QStat version 2.5c+ (Multiplay Addition's)
-** UPDATED for 2.5c+ **
-Oct 10, 2003
+QStat version 2.7
+
+** UPDATED for 2.7 **
+Dec 22, 2004
+
 Summary of New Features
 -----------------------
-Ravenshield support [-rvs]
-	Added native support for the Ravenshield protocol
-Savage support [-sas]
-	Added native support for the Savage protocol.
+new protocols:
+   UT2004 master [-ut2004m]
+
+update steam master protocol to new version
+add additional output to the player xml of -gps
+add option -progress,n to print out progress every n packets
+add doom3 protocol and osmask as server rule
+use autoconf+automake, a simple Makefile is provided as fallback
+add "flags" to qstat.cfg
 
 Fixes
 -----
-Updated GameSpy Server Protocol
-	Updated to better handle player name issues and to correctly
-	parse Battlefield 1942 output.
+fix hanging qstat when receiving UDP packets with incorrect checksum
+fix colored names in America's Army (use -ams instead of -gps)
 
-All the above are done by myself so any issues please contact me:
-Email: killing@multiplay.co.uk
-IRC: #mpukhosting on Quakenet
+--
+Steve Jankowski
+Steven Hartland
+Ludwig Nussel
 
 
-QStat version 2.5c
+QStat version 2.6
+
+** UPDATED for 2.6 **
+Aug 15, 2004
+
+Summary of New Features
+-----------------------
+new protocols:
+   All Seeing Eye [-eye]
+   Ravenshield [-rvs]
+   Savage [-sas]
+   FarCry [-fcs]
+   Jedi Knight: Jedi Academy [-jk3m, -jk3s]
+   Gamespy2 [-gs2]
+   Steam master [-stm]
+   Doom3 [-dm3s, -dm3s]
+   Half-Life 2 [-hl2s] (experimental)
+
+add option -hsn to display server names in hex [no docs]
+add "servers/sec" to -progress output
+add -mdelim parameter to specify the multi value delimiter ( default '|' )
+add \final\\ to end of gamespy master request
+add UT2K4 colored name parsing
+add UT2 XMP colored name parsing
+add SOF coloring of server names
+
+Fixes
+-----
+fix custom q3 master query for masters created via qstat.cfg
+fix gamespy protocol to better handle Halo and BF1942
+fix for multi value fields in UT2003 e.g. Mutators.
+fix XML escaping bugs
+
+New template variables
+----------------------
+$SCORE    player score
+
+Thanks
+------
+Timothee Besset from id Software for providing Doom3 protocol information
+Alexander Schäfer for fixing version and password field for Ravenshield
+and of course everyone else who provided feedback and bug reports
+
+--
+Steve Jankowski
+Steven Hartland
+Ludwig Nussel
+
+
 ** UPDATED for 2.5c **
 Nov 11, 2002
 
