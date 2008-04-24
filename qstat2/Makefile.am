@@ -19,7 +19,12 @@ qstat_SOURCES = \
 	gps.c gps.h \
 	gs2.c gs2.h \
 	gs3.c gs3.h \
-	ts2.c ts2.h
+	ts2.c ts2.h \
+	tm.c tm.h \
+	haze.c haze.h \
+	ottd.c ottd.h \
+	wic.c wic.h \
+	fl.c fl.h
 
 dist_configfiles_DATA = qstat.cfg
 configfilesdir = $(sysconfdir)
@@ -32,4 +37,4 @@ EXTRA_DIST = CHANGES.txt COMPILE.txt LICENSE.txt \
 
 cl:
 	cvs2cl.pl --utc --no-wrap --separate-header --no-times -f ChangeLog.cvs
-	rm -f ChangeLog.cvs.bak
+	rm -f ChangeLog.cvs.bak qstat.core

@@ -2,7 +2,7 @@
  * qstat 2.8
  * by Steve Jankowski
  *
- * Gamespy query protocol
+ * Teamspeak 2 query protocol
  * Copyright 2005 Steven Hartland
  *
  * Licensed under the Artistic License, see LICENSE.txt for license terms
@@ -22,7 +22,7 @@
 #include "packet_manip.h"
 
 
-void send_ts2_request_packet( struct qserver *server )
+int send_ts2_request_packet( struct qserver *server )
 {
 	char buf[256];
 
@@ -42,14 +42,14 @@ void send_ts2_request_packet( struct qserver *server )
 		server->saved_data.pkt_index = 1;
 	}
 
-	send_packet( server, buf, strlen( buf ) );
+	return send_packet( server, buf, strlen( buf ) );
 }
 
 
-void deal_with_ts2_packet( struct qserver *server, char *rawpkt, int pktlen )
+int deal_with_ts2_packet( struct qserver *server, char *rawpkt, int pktlen )
 {
 	char *s, *end;
-	int ping, connect_time;
+	int ping, connect_time, mode = 0;
 	char name[256];
 	debug( 2, "processing..." );
 
@@ -71,60 +71,85 @@ void deal_with_ts2_packet( struct qserver *server, char *rawpkt, int pktlen )
 
 	while ( NULL != s )
 	{
-		char *key = s;
-		char *value = strchr( key, '=' );
-		if ( NULL != value )
+		if ( 0 == mode )
 		{
-			// Server Rule
-			*value = '\0';
-			value++;
-			if ( 0 == strcmp( "server_name", key ) )
+			// Rules
+			char *key = s;
+			char *value = strchr( key, '=' );
+			if ( NULL != value )
 			{
-				server->server_name = strdup( value );
+				// Server Rule
+				*value = '\0';
+				value++;
+				if ( 0 == strcmp( "server_name", key ) )
+				{
+					server->server_name = strdup( value );
+				}
+				else if ( 0 == strcmp( "server_udpport", key ) )
+				{
+					change_server_port( server, atoi( value ), 0 );
+					add_rule( server, key, value, NO_FLAGS );
+				}
+				else if ( 0 == strcmp( "server_maxusers", key ) )
+				{
+					server->max_players = atoi( value );
+				}
+				else if ( 0 == strcmp( "server_currentusers", key ) )
+				{
+					server->num_players = atoi( value);
+				}
+				else
+				{
+					add_rule( server, key, value, NO_FLAGS);
+				}
 			}
-			else if ( 0 == strcmp( "server_udpport", key ) )
+			else if ( 0 == strcmp( "OK", s ) )
 			{
-				change_server_port( server, atoi( value ), 0 );
-				add_rule( server, key, value, NO_FLAGS );
+				// end of rules request
+				server->saved_data.pkt_index--;
+				mode++;
 			}
-			else if ( 0 == strcmp( "server_maxusers", key ) )
+			else if ( 0 == strcmp( "[TS]", s ) )
 			{
-				server->max_players = atoi( value );
+				// nothing to do
 			}
-			else if ( 0 == strcmp( "server_currentusers", key ) )
+			else if ( 0 == strcmp( "ERROR, invalid id", s ) )
 			{
-				server->num_players = atoi( value);
-			}
-			else
-			{
-				add_rule( server, key, value, NO_FLAGS);
+				// bad server
+				server->server_name = DOWN;
+				server->saved_data.pkt_index = 0;
 			}
 		}
-		else if ( 3 == sscanf( s, "%*d %*d %*d %*d %*d %*d %*d %d %d %*d %*d %*d %*d \"0.0.0.0\" \"%255[^\"]", &ping, &connect_time, name ) )
+		else if ( 1 == mode )
 		{
 			// Player info
-			struct player *player = add_player( server, server->n_player_info );
-			if ( NULL != player )
+			if ( 3 == sscanf( s, "%*d %*d %*d %*d %*d %*d %*d %d %d %*d %*d %*d %*d \"0.0.0.0\" \"%255[^\"]", &ping, &connect_time, name ) )
 			{
-				player->name = strdup( name );
-				player->ping = ping;
-				player->connect_time = connect_time;
+				// Player info
+				struct player *player = add_player( server, server->n_player_info );
+				if ( NULL != player )
+				{
+					player->name = strdup( name );
+					player->ping = ping;
+					player->connect_time = connect_time;
+				}
 			}
-		}
-		else if ( 0 == strcmp( "OK", s ) )
-		{
-			// end of request result
-			server->saved_data.pkt_index--;
-		}
-		else if ( 0 == strcmp( "[TS]", s ) )
-		{
-			// nothing to do
-		}
-		else if ( 0 == strcmp( "ERROR, invalid id", s ) )
-		{
-			// bad server
-			server->server_name = DOWN;
-			server->saved_data.pkt_index = 0;
+			else if ( 0 == strcmp( "OK", s ) )
+			{
+				// end of rules request
+				server->saved_data.pkt_index--;
+				mode++;
+			}
+			else if ( 0 == strcmp( "[TS]", s ) )
+			{
+				// nothing to do
+			}
+			else if ( 0 == strcmp( "ERROR, invalid id", s ) )
+			{
+				// bad server
+				server->server_name = DOWN;
+				server->saved_data.pkt_index = 0;
+			}
 		}
 		s = strtok( NULL, "\015\012" );
 	}
@@ -132,6 +157,8 @@ void deal_with_ts2_packet( struct qserver *server, char *rawpkt, int pktlen )
 	if ( 0 == server->saved_data.pkt_index )
 	{
 		server->map_name = strdup( "N/A" );
-		cleanup_qserver( server, 1 );
+		return cleanup_qserver( server, FORCE );
 	}
+
+	return 0;
 }

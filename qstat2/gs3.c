@@ -51,7 +51,7 @@ int process_gs3_packet( struct qserver *server );
 //	query: [0xFE][0xFD][0x00][0x.. 4-byte-instance][0xb3412b5a "-1287574694"]
 //
 
-void deal_with_gs3_packet( struct qserver *server, char *rawpkt, int pktlen )
+int deal_with_gs3_packet( struct qserver *server, char *rawpkt, int pktlen )
 {
 	char *ptr = rawpkt;
 	unsigned int pkt_id;
@@ -59,14 +59,48 @@ void deal_with_gs3_packet( struct qserver *server, char *rawpkt, int pktlen )
 	unsigned char flag;
 	unsigned int pkti, final;
 
-	debug( 2, "packet..." );
+	debug( 2, "packet n_requests %d, retry1 %d, n_retries %d, delta %d", server->n_requests, server->retry1, n_retries, time_delta( &packet_recv_time, &server->packet_time1 ) );
+	server->ping_total += time_delta( &packet_recv_time, &server->packet_time1 );
+
+	if ( 7 == pktlen && 0x09 == *ptr )
+	{
+		// gs4 query sent to a gs3 server
+		// switch protocols and try again
+
+		// Correct the stats due to two phase protocol
+		int i;
+		server_type *gs3_type = &builtin_types[49];
+		debug( 3, "Attempting gs3 fallback from gs4" );
+		server->retry1++;
+		if ( GAMESPY3_PROTOCOL_SERVER != gs3_type->id )
+		{
+			// Static coding failure do it the hard way
+			debug( 1, "gs3 static lookup failure, using dynamic lookup" );
+			for( i = 0; i < GAMESPY3_PROTOCOL_SERVER; i++ )
+			{
+				if ( GAMESPY3_PROTOCOL_SERVER == builtin_types[i].id )
+				{
+					// found it
+					gs3_type = &builtin_types[i];
+					i = GAMESPY3_PROTOCOL_SERVER;
+				}
+			}
+
+			if ( GAMESPY3_PROTOCOL_SERVER != gs3_type->id )
+			{
+				malformed_packet( server, "GS3 protocol not found" );
+				return cleanup_qserver( server, FORCE );
+			}
+		}
+		server->type = gs3_type;
+		return send_gs3_request_packet( server );
+	}
 
 	if ( pktlen < 12 )
 	{
 		// invalid packet?
 		malformed_packet( server, "too short" );
-		cleanup_qserver( server, 1 );
-		return;
+		return cleanup_qserver( server, FORCE );
 	}
 
 	if ( 0x09 == *ptr )
@@ -78,39 +112,19 @@ void deal_with_gs3_packet( struct qserver *server, char *rawpkt, int pktlen )
 		memcpy( &pkt_id, ptr, 4 );
 		ptr += 4;
 		server->challenge = atoi( ptr );
-
-		// Correct the stats due to two phase protocol
 		server->retry1++;
-		server->n_packets--;
-		if ( server->retry1 == n_retries || server->flags & FLAG_BROADCAST )
-		{
-			server->n_requests--;
-		}
-		else
-		{
-			server->n_retries--;
-		}
-		send_gs3_request_packet( server );
-		return;
+
+		return send_gs3_request_packet( server );
 	}
 
 	if ( 0x00 != *ptr )
 	{
 		malformed_packet( server, "bad initial byte '%hhx'", *ptr );
-		cleanup_qserver( server, 1 );
-		return;
+		return cleanup_qserver( server, FORCE );
 	}
 	ptr++;
 
 	server->n_servers++;
-	if ( server->server_name == NULL )
-	{
-		server->ping_total += time_delta( &packet_recv_time, &server->packet_time1 );
-	}
-	else
-	{
-		gettimeofday( &server->packet_time1, NULL);
-	}
 
 	// Could check the header here should
 	// match the 4 byte id sent
@@ -123,14 +137,12 @@ void deal_with_gs3_packet( struct qserver *server, char *rawpkt, int pktlen )
 		if ( server->flags & TF_STATUS_QUERY )
 		{
 			// we have the status response
-			deal_with_gs3_status( server, ptr, pktlen - ( ptr - rawpkt )  );
-			return;
+			return deal_with_gs3_status( server, ptr, pktlen - ( ptr - rawpkt )  );
 		}
 		else
 		{
 			malformed_packet( server, "missing splitnum" );
-			cleanup_qserver( server, 1 );
-			return;
+			return cleanup_qserver( server, FORCE );
 		}
 	}
 	ptr += 9;
@@ -167,20 +179,18 @@ void deal_with_gs3_packet( struct qserver *server, char *rawpkt, int pktlen )
 		if ( ! add_packet( server, pkt_id, pkt_index, pkt_max, pktlen, rawpkt, 1 ) )
 		{
 			// fatal error e.g. out of memory
-			return;
+			return cleanup_qserver( server, FORCE );
 		}
 
 		// combine_packets will call us recursively
-		combine_packets( server );
-		return;
+		return combine_packets( server );
 	}
 
 	// if we get here we have what should be a full packet
-	process_gs3_packet( server );
-	return;
+	return process_gs3_packet( server );
 }
 
-void deal_with_gs3_status( struct qserver *server, char *rawpkt, int pktlen )
+int deal_with_gs3_status( struct qserver *server, char *rawpkt, int pktlen )
 {
 	char *pkt = rawpkt;
 	debug( 1, "status packet" );
@@ -194,8 +204,90 @@ void deal_with_gs3_status( struct qserver *server, char *rawpkt, int pktlen )
 	pkt += strlen( pkt ) + 1;
 
 	// map
-	server->map_name = strdup( pkt );
-	pkt += strlen( pkt ) + 1;
+	// UT3 retail compatibility
+	if ( 0 == strncmp( pkt, "OwningPlayerId", 13 ) )
+	{
+		char *end = pkt + strlen( pkt ) + 1;
+		char *var = pkt;
+		while ( NULL != var )
+		{
+			char *next;
+			char *val = strstr( var, "=" );
+			*val = '\0';
+			val++;
+			next = strstr( val, "," );
+			if ( NULL != next )
+			{
+				*next = '\0';
+				next++;
+			}
+
+			if ( 0 == strcmp( var, "mapname" ) )
+			{
+				if ( server->map_name )
+				{
+					free( server->map_name );
+				}
+				server->map_name = strdup( val );
+			}
+			else if ( 0 == strcmp( var, "p1073741825" ) )
+			{
+				if ( server->map_name )
+				{
+					free( server->map_name );
+				}
+				server->map_name = strdup( val );
+			}
+			else if ( 0 == strcmp( var, "p1073741826" ) )
+			{
+				add_rule( server, "gametype", val, OVERWITE_DUPLICATES );
+			}
+			else if ( 0 == strcmp( var, "p268435705" ) )
+			{
+				add_rule( server, "timelimit", val, OVERWITE_DUPLICATES );
+			}
+			else if ( 0 == strcmp( var, "p1073741827" ) )
+			{
+				add_rule( server, "description", val, OVERWITE_DUPLICATES );
+#ifndef UT3_PATCHED
+				if ( 0 != strlen( val ) )
+				{
+					if ( server->server_name )
+					{
+						char *name = (char*)realloc( server->server_name, strlen( server->server_name ) + strlen( val ) + 3 );
+						if ( name )
+						{
+							strcat( name, ": " );
+							strcat( name, val );
+							server->server_name = name;
+						}
+					}
+					server->server_name = strdup( val );
+				}
+#endif
+			}
+			else if ( 0 == strcmp( var, "p268435704" ) )
+			{
+				add_rule( server, "goalscore", val, OVERWITE_DUPLICATES );
+			}
+			else if ( 0 == strcmp( var, "s32779" ) )
+			{
+				add_rule( server, "gamemode", val, OVERWITE_DUPLICATES );
+			}
+			else
+			{
+				add_rule( server, var, val, OVERWITE_DUPLICATES );
+			}
+
+			var = next;
+		}
+		pkt = end;
+	}
+	else
+	{
+		server->map_name = strdup( pkt );
+		pkt += strlen( pkt ) + 1;
+	}
 
 	// num players
 	server->num_players = atoi( pkt );
@@ -209,7 +301,7 @@ void deal_with_gs3_status( struct qserver *server, char *rawpkt, int pktlen )
 	change_server_port( server, atoi( pkt ), 0 );
 	pkt += strlen( pkt ) + 1;
 
-	cleanup_qserver( server, 1 );
+	return cleanup_qserver( server, FORCE );
 }
 
 int process_gs3_packet( struct qserver *server )
@@ -236,8 +328,7 @@ int process_gs3_packet( struct qserver *server )
 		{
 			// invalid packet?
 			malformed_packet( server, "too short" );
-			cleanup_qserver( server, 1 );
-			return 0;
+			return cleanup_qserver( server, FORCE );
 		}
 
 		// skip over the header
@@ -267,8 +358,7 @@ int process_gs3_packet( struct qserver *server )
 			if ( ptr + 1 > end )
 			{
 				malformed_packet( server, "no rule value" );
-				cleanup_qserver( server, 1);
-				return 0;
+				return cleanup_qserver( server, FORCE );
 			}
 
 			val = ptr;
@@ -283,15 +373,100 @@ int process_gs3_packet( struct qserver *server )
 			else if( 0 == strcmp( var, "game_id" ) )
 			{
 				server->game = strdup( val );
+				add_rule( server, var, val, NO_FLAGS );
 			}
 			else if( 0 == strcmp( var, "gamever" ) )
 			{
 				// format:
 				// v1.0
 				server->protocol_version = atoi( val+1 );
+				add_rule( server, var, val, NO_FLAGS );
 			}
 			else if( 0 == strcmp( var, "mapname" ) )
 			{
+				// UT3 retail compatibility
+				if ( 0 == strncmp( val, "OwningPlayerId", 13 ) )
+				{
+					var = val;
+					while ( NULL != var )
+					{
+						char *next;
+						char *val = strstr( var, "=" );
+						*val = '\0';
+						val++;
+						next = strstr( val, "," );
+						if ( NULL != next )
+						{
+							*next = '\0';
+							next++;
+						}
+	
+						if ( 0 == strcmp( var, "mapname" ) )
+						{
+							if ( server->map_name )
+							{
+								free( server->map_name );
+							}
+							server->map_name = strdup( val );
+						}
+						else if ( 0 == strcmp( var, "p1073741825" ) )
+						{
+							if ( server->map_name )
+							{
+								free( server->map_name );
+							}
+							server->map_name = strdup( val );
+						}
+						else if ( 0 == strcmp( var, "p1073741826" ) )
+						{
+							add_rule( server, "gametype", val, OVERWITE_DUPLICATES );
+						}
+						else if ( 0 == strcmp( var, "p268435705" ) )
+						{
+							add_rule( server, "timelimit", val, OVERWITE_DUPLICATES );
+						}
+						else if ( 0 == strcmp( var, "p1073741827" ) )
+						{
+#ifndef UT3_PATCHED
+							if ( 0 != strlen( val ) )
+							{
+								if ( server->server_name )
+								{
+									char *name = (char*)realloc( server->server_name, strlen( server->server_name ) + strlen( val ) + 3 );
+									if ( name )
+									{
+										strcat( name, ": " );
+										strcat( name, val );
+										server->server_name = name;
+									}
+								}
+								server->server_name = strdup( val );
+							}
+#endif
+						}
+						else if ( 0 == strcmp( var, "p268435704" ) )
+						{
+							add_rule( server, "goalscore", val, OVERWITE_DUPLICATES );
+						}
+						else if ( 0 == strcmp( var, "s32779" ) )
+						{
+							add_rule( server, "gamemode", val, OVERWITE_DUPLICATES );
+						}
+						else
+						{
+							add_rule( server, var, val, OVERWITE_DUPLICATES );
+						}
+						var = next;
+					}
+				}
+				else
+				{
+					server->map_name = strdup( val );
+				}
+			}
+			else if( 0 == strcmp( var, "map" ) )
+			{
+				// BF2MC compatibility
 				server->map_name = strdup( val );
 			}
 			else if( 0 == strcmp( var, "maxplayers" ) )
@@ -307,9 +482,59 @@ int process_gs3_packet( struct qserver *server )
 			{
 				change_server_port( server, atoi( val ), 0 );
 			}
+			else if ( 0 == strcmp( var, "p1073741825" ) )
+			{
+				// UT3 demo compatibility
+				if ( server->map_name )
+				{
+					free( server->map_name );
+				}
+				server->map_name = strdup( val );
+			}
+			else if ( 0 == strcmp( var, "p1073741826" ) )
+			{
+				// UT3 demo compatibility
+				add_rule( server, "gametype", val, OVERWITE_DUPLICATES );
+			}
+			else if ( 0 == strcmp( var, "p268435705" ) )
+			{
+				// UT3 demo compatibility
+				add_rule( server, "timelimit", val, OVERWITE_DUPLICATES );
+			}
+			else if ( 0 == strcmp( var, "p1073741827" ) )
+			{
+				// UT3 demo compatibility
+				add_rule( server, "description", val, OVERWITE_DUPLICATES );
+#ifndef UT3_PATCHED
+				if ( 0 != strlen( val ) )
+				{
+					if ( server->server_name )
+					{
+						char *name = (char*)realloc( server->server_name, strlen( server->server_name ) + strlen( val ) + 3 );
+						if ( name )
+						{
+							strcat( name, ": " );
+							strcat( name, val );
+							server->server_name = name;
+						}
+					}
+					server->server_name = strdup( val );
+				}
+#endif
+			}
+			else if ( 0 == strcmp( var, "p268435704" ) )
+			{
+				// UT3 demo compatibility
+				add_rule( server, "goalscore", val, OVERWITE_DUPLICATES );
+			}
+			else if ( 0 == strcmp( var, "s32779" ) )
+			{
+				// UT3 demo compatibility
+				add_rule( server, "gamemode", val, OVERWITE_DUPLICATES );
+			}
 			else
 			{
-				add_rule( server, var, val, NO_FLAGS );
+				add_rule( server, var, val, OVERWITE_DUPLICATES );
 			}
 		}
 
@@ -325,8 +550,7 @@ int process_gs3_packet( struct qserver *server )
 			{
 				// no more info
 				debug( 3, "All done" );
-				cleanup_qserver( server, 1 );
-				return 1;
+				return cleanup_qserver( server, FORCE );
 			}
 
 			debug( 2, "player header '%s'", header );
@@ -334,14 +558,13 @@ int process_gs3_packet( struct qserver *server )
 			if ( ptr > end )
 			{
 				malformed_packet( server, "no details for header '%s'", header );
-				cleanup_qserver( server, 1 );
-				return 0;
+				return cleanup_qserver( server, FORCE );
 			}
 
 			// the next byte is the starting number
 			total_players = *ptr++;
 
-			if ( 0 == strcmp( header, "player_" ) )
+			if ( 0 == strcmp( header, "player_" ) || 0 == strcmp( header, "name_" ) )
 			{
 				header_type = PLAYER_NAME_HEADER;
 			}
@@ -403,8 +626,7 @@ int process_gs3_packet( struct qserver *server )
 				if ( ptr >= end )
 				{
 					malformed_packet( server, "short player detail" );
-					cleanup_qserver( server, 1);
-					return 0;
+					return cleanup_qserver( server, FORCE );
 				}
 				val = ptr;
 				val_len = strlen( val );
@@ -459,8 +681,7 @@ int process_gs3_packet( struct qserver *server )
 				if ( total_players > no_players )
 				{
 					malformed_packet( server, "to many players %d > %d", total_players, no_players );
-					cleanup_qserver( server, 1 );
-					return 0;
+					return cleanup_qserver( server, FORCE );
 				}
 			}
 		}
@@ -486,8 +707,7 @@ int process_gs3_packet( struct qserver *server )
 			{
 				// no more info
 				debug( 3, "All done" );
-				cleanup_qserver( server, 1 );
-				return 1;
+				return cleanup_qserver( server, FORCE );
 			}
 
 			debug( 2, "team header '%s'", header );
@@ -513,8 +733,7 @@ int process_gs3_packet( struct qserver *server )
 				if ( ptr >= end )
 				{
 					malformed_packet( server, "short team detail" );
-					cleanup_qserver( server, 1);
-					return 0;
+					return cleanup_qserver( server, FORCE );
 				}
 				val = ptr;
 				val_len = strlen( val );
@@ -549,11 +768,10 @@ int process_gs3_packet( struct qserver *server )
 		}
 	}
 
-	cleanup_qserver( server, 1 );
-	return 1;
+	return cleanup_qserver( server, FORCE );
 }
 
-void send_gs3_request_packet( struct qserver *server )
+int send_gs3_request_packet( struct qserver *server )
 {
 	char *packet;
 	char query_buf[128];
@@ -612,5 +830,5 @@ void send_gs3_request_packet( struct qserver *server )
 		}
 	}
 
-	send_packet( server, packet, len );
+	return send_packet( server, packet, len );
 }

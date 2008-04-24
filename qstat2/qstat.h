@@ -68,10 +68,15 @@ typedef struct _server_type server_type;
 #include "ut2004.h"
 #include "doom3.h"
 #include "a2s.h"
+#include "fl.h"
 #include "gps.h"
 #include "gs2.h"
 #include "gs3.h"
+#include "haze.h"
 #include "ts2.h"
+#include "tm.h"
+#include "wic.h"
+#include "ottd.h"
 
 /*
  * Various magic numbers.
@@ -86,6 +91,7 @@ typedef struct _server_type server_type;
 #define QW_DEFAULT_PORT			27500
 #define QW_MASTER_DEFAULT_PORT		27000
 #define HW_DEFAULT_PORT			26950
+#define HW_MASTER_DEFAULT_PORT		26900
 #define UNREAL_DEFAULT_PORT		7777
 #define UNREAL_MASTER_DEFAULT_PORT	28900
 #define HALFLIFE_DEFAULT_PORT		27015
@@ -118,6 +124,9 @@ typedef struct _server_type server_type;
 #define HL2_DEFAULT_PORT	27015
 #define HL2_MASTER_DEFAULT_PORT	27011
 #define TS2_DEFAULT_PORT 51234
+#define TM_DEFAULT_PORT 5000
+#define WIC_DEFAULT_PORT 5000 // Default is actually disabled
+#define FL_DEFAULT_PORT 5478
 
 
 #define Q_UNKNOWN_TYPE 0
@@ -179,8 +188,17 @@ typedef struct _server_type server_type;
 #define QUAKE4_MASTER (53|MASTER_SERVER)
 #define ARMYOPS_SERVER 54
 #define GAMESPY4_PROTOCOL_SERVER 55
+#define PREY_SERVER 56
+#define TM_PROTOCOL_SERVER 57
+#define ETQW_SERVER 58
+#define HAZE_SERVER 59
+#define HW_MASTER (60 | MASTER_SERVER)
+#define WIC_PROTOCOL_SERVER 61
+#define OTTD_SERVER 62
+#define OTTD_MASTER (63 | MASTER_SERVER)
+#define FL_SERVER	64
 
-#define LAST_BUILTIN_SERVER  55
+#define LAST_BUILTIN_SERVER  64
 
 #define TF_SINGLE_QUERY		(1<<1)
 #define TF_OUTFILE		(1<<2)
@@ -207,14 +225,15 @@ typedef struct _server_type server_type;
 #define TF_STATUS_QUERY		(1<<17)
 #define TF_PLAYER_QUERY		(1<<18)
 #define TF_RULES_QUERY		(1<<19)
+#define TF_TM_NAMES			(1<<20)
 
 #define TRIBES_TEAM	-1
 
 struct q_packet;
 
 typedef void (*DisplayFunc)( struct qserver *);
-typedef void (*QueryFunc)( struct qserver *);
-typedef void (*PacketFunc)( struct qserver *, char *rawpkt, int pktlen);
+typedef int (*QueryFunc)( struct qserver *);
+typedef int (*PacketFunc)( struct qserver *, char *rawpkt, int pktlen);
 
 /*
  * Output and formatting functions
@@ -244,6 +263,10 @@ void display_gs2_player_info( struct qserver *server);
 void display_doom3_player_info( struct qserver *server);
 void display_hl2_player_info( struct qserver *server);
 void display_ts2_player_info( struct qserver *server);
+void display_tm_player_info( struct qserver *server);
+void display_haze_player_info( struct qserver *server);
+void display_wic_player_info( struct qserver *server);
+void display_fl_player_info( struct qserver *server);
 
 void raw_display_server( struct qserver *server);
 void raw_display_server_rules( struct qserver *server);
@@ -267,6 +290,10 @@ void raw_display_gs2_player_info( struct qserver *server);
 void raw_display_doom3_player_info( struct qserver *server);
 void raw_display_hl2_player_info( struct qserver *server);
 void raw_display_ts2_player_info( struct qserver *server);
+void raw_display_tm_player_info( struct qserver *server);
+void raw_display_haze_player_info( struct qserver *server);
+void raw_display_wic_player_info( struct qserver *server);
+void raw_display_fl_player_info( struct qserver *server);
 
 void xml_display_server( struct qserver *server);
 void xml_header();
@@ -292,57 +319,64 @@ void xml_display_gs2_player_info( struct qserver *server);
 void xml_display_doom3_player_info( struct qserver *server);
 void xml_display_hl2_player_info( struct qserver *server);
 void xml_display_ts2_player_info( struct qserver *server);
+void xml_display_tm_player_info( struct qserver *server);
+void xml_display_haze_player_info( struct qserver *server);
+void xml_display_wic_player_info( struct qserver *server);
+void xml_display_fl_player_info( struct qserver *server);
 char *xml_escape( char*);
 char *str_replace( char *, char *, char *);
 
-void send_server_request_packet( struct qserver *server);
-void send_qserver_request_packet( struct qserver *server);
-void send_qwserver_request_packet( struct qserver *server);
-void send_ut2003_request_packet( struct qserver *server);
-void send_tribes_request_packet( struct qserver *server);
-void send_qwmaster_request_packet( struct qserver *server);
-void send_bfris_request_packet( struct qserver *server);
-void send_player_request_packet( struct qserver *server);
-void send_rule_request_packet( struct qserver *server);
-void send_ravenshield_request_packet( struct qserver *server);
-void send_savage_request_packet( struct qserver *server);
-void send_farcry_request_packet( struct qserver *server);
-void send_gamespy_master_request( struct qserver *server);
-void send_tribes2_request_packet( struct qserver *server);
-void send_tribes2master_request_packet( struct qserver *server);
-void send_ghostrecon_request_packet( struct qserver *server);
-void send_eye_request_packet( struct qserver *server);
-void send_gs2_request_packet( struct qserver *server);
-void send_doom3_request_packet( struct qserver *server);
-void send_hl2_request_packet( struct qserver *server);
-void send_ts2_request_packet( struct qserver *server);
+int send_server_request_packet( struct qserver *server);
+int send_qserver_request_packet( struct qserver *server);
+int send_qwserver_request_packet( struct qserver *server);
+int send_ut2003_request_packet( struct qserver *server);
+int send_tribes_request_packet( struct qserver *server);
+int send_qwmaster_request_packet( struct qserver *server);
+int send_bfris_request_packet( struct qserver *server);
+int send_player_request_packet( struct qserver *server);
+int send_rule_request_packet( struct qserver *server);
+int send_ravenshield_request_packet( struct qserver *server);
+int send_savage_request_packet( struct qserver *server);
+int send_farcry_request_packet( struct qserver *server);
+int send_gamespy_master_request( struct qserver *server);
+int send_tribes2_request_packet( struct qserver *server);
+int send_tribes2master_request_packet( struct qserver *server);
+int send_ghostrecon_request_packet( struct qserver *server);
+int send_eye_request_packet( struct qserver *server);
+int send_gs2_request_packet( struct qserver *server);
+int send_doom3_request_packet( struct qserver *server);
+int send_hl2_request_packet( struct qserver *server);
+int send_ts2_request_packet( struct qserver *server);
+int send_tm_request_packet( struct qserver *server);
+int send_wic_request_packet( struct qserver *server);
 
-void deal_with_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_q_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_qw_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_q1qw_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_q2_packet( struct qserver *server, char *pkt, int pktlen,
-	int check_duplicate_rules);
-void deal_with_doom3master_packet( struct qserver *server, char *rawpkt, int pktlen);
-void deal_with_qwmaster_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_q_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_qw_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_q1qw_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_q2_packet( struct qserver *server, char *pkt, int pktlen );
+int deal_with_doom3master_packet( struct qserver *server, char *rawpkt, int pktlen);
+int deal_with_qwmaster_packet( struct qserver *server, char *pkt, int pktlen);
 int deal_with_halflife_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_ut2003_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_tribes_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_tribesmaster_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_bfris_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_gamespy_master_response( struct qserver *server, char *pkt, int pktlen);
-void deal_with_ravenshield_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_savage_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_farcry_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_tribes2_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_tribes2master_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_descent3_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_descent3master_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_ghostrecon_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_eye_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_doom3_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_hl2_packet( struct qserver *server, char *pkt, int pktlen);
-void deal_with_ts2_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_ut2003_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_tribes_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_tribesmaster_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_bfris_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_gamespy_master_response( struct qserver *server, char *pkt, int pktlen);
+int deal_with_ravenshield_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_savage_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_farcry_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_tribes2_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_tribes2master_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_descent3_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_descent3master_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_ghostrecon_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_eye_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_doom3_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_hl2_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_ts2_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_tm_packet( struct qserver *server, char *pkt, int pktlen);
+int deal_with_wic_packet( struct qserver *server, char *pkt, int pktlen);
 
 struct _server_type  {
     int id;
@@ -426,9 +460,9 @@ struct q_packet q_player = {Q_FLAG1,Q_FLAG2, 6, Q_CCREQ_PLAYER_INFO, ""};
 /* QUAKE WORLD */
 struct {
     char prefix[4];
-    char command[7];
+    char command[10];
 } qw_serverstatus =
-{ { '\377', '\377', '\377', '\377' }, { 's', 't', 'a', 't', 'u', 's', '\n' } };
+{ { '\377', '\377', '\377', '\377' }, { 's', 't', 'a', 't', 'u', 's', ' ', '2', '3', '\n' } };
 
 /* QUAKE3 */
 struct {
@@ -501,6 +535,10 @@ char hl_details[12] =
 /* QUAKE WORLD MASTER */
 #define QW_GET_SERVERS    'c'
 char qw_masterquery[] = { QW_GET_SERVERS, '\n', '\0' };
+
+/* HEXENWORLD MASTER */
+#define HW_GET_SERVERS    'c'
+char hw_masterquery[] = { '\377', HW_GET_SERVERS, '\0' };
 
 /* QUAKE 2 MASTER */
 char q2_masterquery[] = { 'q', 'u', 'e', 'r', 'y', '\n', '\0' };
@@ -646,7 +684,9 @@ unsigned char gs2_status_query[] = {
 // 10: Team information (00 to disable)
 // 11: Request new format
 unsigned char gs3_player_query[] = {
-	0xfe,0xfd,0x00,0x10,0x20,0x30,0x40,0xff,0xff,0xff,0x01
+	0xfe,0xfd,0x00,
+	0x10,0x20,0x30,0x40,
+	0xff,0xff,0xff,0x01
 };
 
 // Format:
@@ -677,7 +717,40 @@ unsigned char gs3_status_query[] = {
 // 1 - 3: query head
 // 4 - 7: queryid
 unsigned char gs3_challenge[] = {
-	0xfe,0xfd,0x09,0x10,0x20,0x30,0x40
+	0xfe,0xfd,0x09,
+	0x10,0x20,0x30,0x40
+};
+
+// Format:
+// 1 - 8: Query Request
+// 9 - 12: Query Header
+// 13: Query ID
+
+// Query ID is made up of the following
+// 0x01: Basic Info
+// 0x02: Game Rules
+// 0x03: Player Information
+// 0x04: Team Information
+unsigned char haze_status_query[] = {
+	'f', 'r', 'd', 'q', 'u', 'e', 'r', 'y',
+	0x10,0x20,0x30,0x40,
+	0x0A
+};
+
+// Format:
+// 1 - 8: Query Request
+// 9 - 12: Query Header
+// 13: Query ID
+
+// Query ID is made up of the following
+// 0x01: Basic Info
+// 0x02: Game Rules
+// 0x03: Player Information
+// 0x04: Team Information
+unsigned char haze_player_query[] = {
+	'f', 'r', 'd', 'q', 'u', 'e', 'r', 'y',
+	0x10,0x20,0x30,0x40,
+	0x03
 };
 
 
@@ -737,6 +810,22 @@ unsigned char farcry_serverquery[] = {
 char ravenshield_serverquery[] = "REPORT";
 
 unsigned char ts2_status_query[] = "si";
+
+char ottd_master_query[] = {
+	0x04, 0x00,	// packet length
+	0x06,		// packet type
+	0x01		// packet version
+};
+
+char ottd_serverinfo[] = {
+	0x03, 0x00,	// packet length
+	0x00,		// packet type
+};
+
+char ottd_serverdetails[] = {
+	0x03, 0x00,	// packet length
+	0x02,		// packet type
+};
 
 server_type builtin_types[] = {
 {
@@ -1213,7 +1302,6 @@ server_type builtin_types[] = {
     send_qwserver_request_packet,/* status_query_func */
     NULL,			/* rule_query_func */
     NULL,			/* player_query_func */
-    (void (*)( struct qserver *, char *, int))
     deal_with_halflife_packet,	/* packet_func */
 },
 {
@@ -1900,6 +1988,40 @@ server_type builtin_types[] = {
     deal_with_qwmaster_packet,	/* packet_func */
 },
 {
+    /* HEXEN2WORLD MASTER */
+    HW_MASTER,			/* id */
+    "HWM",			/* type_prefix */
+    "hwm",			/* type_string */
+    "-hwm",			/* type_option */ /* ## also "-qw" */
+    "HexenWorld Master",	/* game_name */
+    HW_SERVER,			/* master */
+    HW_MASTER_DEFAULT_PORT,	/* default_port */
+    0,				/* port_offset */
+    TF_SINGLE_QUERY|TF_OUTFILE,	/* flags */
+    "",				/* game_rule */
+    "HWMASTER",			/* template_var */
+    NULL,			/* status_packet */
+    0,				/* status_len */
+    NULL,			/* player_packet */
+    0,				/* player_len */
+    NULL,			/* rule_packet */
+    0,				/* rule_len */
+    (char*) &hw_masterquery,	/* master_packet */
+    sizeof( hw_masterquery),	/* master_len */
+    NULL,			/* master_protocol */
+    NULL,			/* master_query */
+    display_qwmaster,		/* display_player_func */
+    NULL,	/* display_rule_func */
+    NULL,	/* display_raw_player_func */
+    NULL,	/* display_raw_rule_func */
+    NULL,	/* display_xml_player_func */
+    NULL,	/* display_xml_rule_func */
+    send_qwmaster_request_packet,/* status_query_func */
+    NULL,			/* rule_query_func */
+    NULL,			/* player_query_func */
+    deal_with_qwmaster_packet,	/* packet_func */
+},
+{
     /* QUAKE 2 MASTER */
     Q2_MASTER,			/* id */
     "Q2M",			/* type_prefix */
@@ -2280,7 +2402,7 @@ server_type builtin_types[] = {
     "stm",			/* type_string */
     "-stm",			/* type_option */ /* ## also "-qw" */
     "Steam Master",		/* game_name */
-    HL_SERVER,			/* master */
+    A2S_SERVER,			/* master */
     STEAM_MASTER_DEFAULT_PORT,	/* default_port */
     0,				/* port_offset */
     TF_SINGLE_QUERY|TF_OUTFILE|TF_QUERY_ARG|TF_MASTER_STEAM, /* flags */
@@ -2483,10 +2605,10 @@ server_type builtin_types[] = {
     QUAKE4_SERVER,					/* id */
     "Q4S",							/* type_prefix */
     "q4s",							/* type_string */
-    "-q4s",						/* type_option */
+    "-q4s",							/* type_option */
     "Quake 4",						/* game_name */
     0,								/* master */
-    QUAKE4_DEFAULT_PORT,				/* default_port */
+    QUAKE4_DEFAULT_PORT,			/* default_port */
     0,								/* port_offset */
     TF_QUAKE3_NAMES,				/* flags */
     "fs_game",						/* game_rule */
@@ -2510,7 +2632,7 @@ server_type builtin_types[] = {
     send_qwserver_request_packet,	/* status_query_func */
     NULL,							/* rule_query_func */
     NULL,							/* player_query_func */
-    deal_with_quake4_packet,			/* packet_func */
+    deal_with_quake4_packet,		/* packet_func */
 },
 {
     /* QUAKE 4 MASTER */
@@ -2579,6 +2701,278 @@ server_type builtin_types[] = {
     NULL,			/* rule_query_func */
     NULL,			/* player_query_func */
     deal_with_gs3_packet,	/* packet_func */
+},
+{
+    /* PREY */
+    PREY_SERVER,					/* id */
+    "PREYS",							/* type_prefix */
+    "preys",							/* type_string */
+    "-preys",						/* type_option */
+    "PREY",						/* game_name */
+    0,								/* master */
+    PREY_DEFAULT_PORT,				/* default_port */
+    0,								/* port_offset */
+    TF_QUAKE3_NAMES,				/* flags */
+    "fs_game",						/* game_rule */
+    "PREY",						/* template_var */
+    (char*) &doom3_serverinfo,		/* status_packet */
+    sizeof( doom3_serverinfo),		/* status_len */
+    NULL,							/* player_packet */
+    0,								/* player_len */
+    NULL,							/* rule_packet */
+    0,								/* rule_len */
+    NULL,							/* master_packet */
+    0,								/* master_len */
+    NULL,							/* master_protocol */
+    NULL,							/* master_query */
+    display_doom3_player_info,		/* display_player_func */
+    display_server_rules,			/* display_rule_func */
+    raw_display_doom3_player_info,	/* display_raw_player_func */
+    raw_display_server_rules,		/* display_raw_rule_func */
+    xml_display_doom3_player_info,	/* display_xml_player_func */
+    xml_display_server_rules,		/* display_xml_rule_func */
+    send_qwserver_request_packet,	/* status_query_func */
+    NULL,							/* rule_query_func */
+    NULL,							/* player_query_func */
+    deal_with_prey_packet,			/* packet_func */
+},
+{
+    /* TRACKMANIA PROTOCOL */
+    TM_PROTOCOL_SERVER,			/* id */
+    "TM",							/* type_prefix */
+    "tm",							/* type_string */
+    "-tm",							/* type_option */
+    "TrackMania",					/* game_name */
+    0,								/* master */
+    0,								/* default_port */
+    0,								/* port_offset */
+    TF_TCP_CONNECT|TF_QUERY_ARG|TF_TM_NAMES,	/* flags */
+    "N/A",							/* game_rule */
+    "TMPROTOCOL",					/* template_var */
+    NULL,							/* status_packet */
+    0,								/* status_len */
+    NULL,							/* player_packet */
+    0,								/* player_len */
+    NULL,							/* rule_packet */
+    0,								/* rule_len */
+    NULL,							/* master_packet */
+    0,								/* master_len */
+    NULL,							/* master_protocol */
+    NULL,							/* master_query */
+    display_tm_player_info,			/* display_player_func */
+    display_server_rules,			/* display_rule_func */
+    raw_display_tm_player_info,		/* display_raw_player_func */
+    raw_display_server_rules,		/* display_raw_rule_func */
+    xml_display_tm_player_info,		/* display_xml_player_func */
+    xml_display_server_rules,		/* display_xml_rule_func */
+    send_tm_request_packet,			/* status_query_func */
+    NULL,							/* rule_query_func */
+    NULL,							/* player_query_func */
+    deal_with_tm_packet,			/* packet_func */
+},
+{
+    /* Enemy Territory : QuakeWars */
+    ETQW_SERVER,					/* id */
+    "ETQWS",						/* type_prefix */
+    "etqws",						/* type_string */
+    "-etqws",						/* type_option */
+    "QuakeWars",					/* game_name */
+    0,								/* master */
+    ETQW_DEFAULT_PORT,				/* default_port */
+    0,								/* port_offset */
+    TF_QUAKE3_NAMES,				/* flags */
+    "fs_game",						/* game_rule */
+    "QUAKE4",						/* template_var */
+    (char*) &doom3_serverinfo,		/* status_packet */
+    sizeof( doom3_serverinfo),		/* status_len */
+    NULL,							/* player_packet */
+    0,								/* player_len */
+    NULL,							/* rule_packet */
+    0,								/* rule_len */
+    NULL,							/* master_packet */
+    0,								/* master_len */
+    NULL,							/* master_protocol */
+    NULL,							/* master_query */
+    display_doom3_player_info,		/* display_player_func */
+    display_server_rules,			/* display_rule_func */
+    raw_display_doom3_player_info,	/* display_raw_player_func */
+    raw_display_server_rules,		/* display_raw_rule_func */
+    xml_display_doom3_player_info,	/* display_xml_player_func */
+    xml_display_server_rules,		/* display_xml_rule_func */
+    send_qwserver_request_packet,	/* status_query_func */
+    NULL,							/* rule_query_func */
+    NULL,							/* player_query_func */
+    deal_with_etqw_packet,			/* packet_func */
+},
+{
+    /* HAZE PROTOCOL */
+    HAZE_SERVER,	/* id */
+    "HAZES",			/* type_prefix */
+    "hazes",			/* type_string */
+    "-hazes",			/* type_option */
+    "Haze Protocol",	/* game_name */
+    0,				/* master */
+    0,				/* default_port */
+    0,				/* port_offset */
+    TF_SINGLE_QUERY,		/* flags */
+    "gametype",			/* game_rule */
+    "HAZE",		/* template_var */
+    (char*) &haze_status_query,	/* status_packet */
+    sizeof( haze_status_query),	/* status_len */
+    (char*) &haze_player_query,	/* player_packet */
+    sizeof( haze_player_query),	/* player_len */
+    NULL,			/* rule_packet */
+    0,				/* rule_len */
+    NULL,			/* master_packet */
+    0,				/* master_len */
+    NULL,			/* master_protocol */
+    NULL,			/* master_query */
+    display_haze_player_info,	/* display_player_func */
+    display_server_rules,	/* display_rule_func */
+    raw_display_haze_player_info,	/* display_raw_player_func */
+    raw_display_server_rules,	/* display_raw_rule_func */
+    xml_display_haze_player_info,	/* display_xml_player_func */
+    xml_display_server_rules,	/* display_xml_rule_func */
+    send_haze_request_packet,	/* status_query_func */
+    NULL,			/* rule_query_func */
+    NULL,			/* player_query_func */
+    deal_with_haze_packet,	/* packet_func */
+},
+{
+    /* World in Confict PROTOCOL */
+    WIC_PROTOCOL_SERVER,			/* id */
+    "WICS",							/* type_prefix */
+    "wics",							/* type_string */
+    "-wics",						/* type_option */
+    "World in Conflict",			/* game_name */
+    0,								/* master */
+    0,								/* default_port */
+    0,								/* port_offset */
+    TF_TCP_CONNECT|TF_QUERY_ARG_REQUIRED|TF_QUERY_ARG,	/* flags */
+    "N/A",							/* game_rule */
+    "WICPROTOCOL",					/* template_var */
+    NULL,							/* status_packet */
+    0,								/* status_len */
+    NULL,							/* player_packet */
+    0,								/* player_len */
+    NULL,							/* rule_packet */
+    0,								/* rule_len */
+    NULL,							/* master_packet */
+    0,								/* master_len */
+    NULL,							/* master_protocol */
+    NULL,							/* master_query */
+    display_wic_player_info,		/* display_player_func */
+    display_server_rules,			/* display_rule_func */
+    raw_display_wic_player_info,	/* display_raw_player_func */
+    raw_display_server_rules,		/* display_raw_rule_func */
+    xml_display_wic_player_info,	/* display_xml_player_func */
+    xml_display_server_rules,		/* display_xml_rule_func */
+    send_wic_request_packet,		/* status_query_func */
+    NULL,							/* rule_query_func */
+    NULL,							/* player_query_func */
+    deal_with_wic_packet,			/* packet_func */
+},
+{
+    /* openTTD */
+    OTTD_SERVER,			/* id */
+    "OTTDS",			/* type_prefix */
+    "ottds",			/* type_string */
+    "-ottds",			/* type_option */
+    "OpenTTD",			/* game_name */
+    0,				/* master */
+    3979,			/* default_port */
+    0,				/* port_offset */
+    0,				/* flags */
+    "",				/* game_rule */
+    "OPENTTD",			/* template_var */
+    (char*) &ottd_serverinfo,	/* status_packet */
+    sizeof( ottd_serverinfo),	/* status_len */
+    NULL,			/* player_packet */
+    0,				/* player_len */
+    (char*) &ottd_serverdetails,/* rule_packet */
+    sizeof( ottd_serverdetails),   /* rule_len */
+    NULL,			/* master_packet */
+    0,				/* master_len */
+    NULL,			/* master_protocol */
+    NULL,			/* master_query */
+    display_q2_player_info,	/* display_player_func */
+    display_server_rules,	/* display_rule_func */
+    raw_display_q2_player_info,	/* display_raw_player_func */
+    raw_display_server_rules,	/* display_raw_rule_func */
+    xml_display_gs2_player_info,/* display_xml_player_func */
+    xml_display_server_rules,	/* display_xml_rule_func */
+    send_ottd_request_packet,	/* status_query_func */
+    NULL,			/* rule_query_func */
+    NULL,			/* player_query_func */
+    deal_with_ottd_packet,	/* packet_func */
+},
+{
+    /* openTTD Master */
+    OTTD_MASTER,		/* id */
+    "OTTDM",			/* type_prefix */
+    "ottdm",			/* type_string */
+    "-ottdm",			/* type_option */
+    "openTTD Master",		/* game_name */
+    OTTD_SERVER,		/* master */
+    3978,			/* default_port */
+    0,				/* port_offset */
+    TF_OUTFILE | TF_QUERY_ARG,	/* flags */
+    "",				/* game_rule */
+    "OTTDMASTER",		/* template_var */
+    NULL,			/* status_packet */
+    0,				/* status_len */
+    NULL,			/* player_packet */
+    0,				/* player_len */
+    NULL,			/* rule_packet */
+    0,				/* rule_len */
+    ottd_master_query,	/* master_packet */
+    sizeof(ottd_master_query),/* master_len */
+    NULL,	/* master_protocol */
+    NULL,	/* master_query */
+    display_qwmaster,		/* display_player_func */
+    NULL,	/* display_rule_func */
+    NULL,	/* display_raw_player_func */
+    NULL,	/* display_raw_rule_func */
+    NULL,	/* display_xml_player_func */
+    NULL,	/* display_xml_rule_func */
+    send_ottdmaster_request_packet,/* status_query_func */
+    NULL,			/* rule_query_func */
+    NULL,			/* player_query_func */
+    deal_with_ottdmaster_packet,	/* packet_func */
+},
+{
+    /* Frontlines-Fuel of War */
+    FL_SERVER,						/* id */
+    "FLS",							/* type_prefix */
+    "fls",							/* type_string */
+    "-fls",							/* type_option */
+    "Frontlines-Fuel of War",		/* game_name */
+    0,								/* master */
+    FL_DEFAULT_PORT,				/* default_port */
+    0,								/* port_offset */
+    TF_QUAKE3_NAMES,				/* flags */
+    "gamedir",						/* game_rule */
+    "FLS",							/* template_var */
+    NULL,							/* status_packet */
+    0,								/* status_len */
+    NULL,							/* player_packet */
+    0,								/* player_len */
+    NULL,							/* rule_packet */
+    0,								/* rule_len */
+    NULL,							/* master_packet */
+    0,								/* master_len */
+    NULL,							/* master_protocol */
+    NULL,							/* master_query */
+    display_fl_player_info,		/* display_player_func */
+    display_server_rules,			/* display_rule_func */
+    raw_display_fl_player_info,	/* display_raw_player_func */
+    raw_display_server_rules,		/* display_raw_rule_func */
+    xml_display_fl_player_info,	/* display_xml_player_func */
+    xml_display_server_rules,		/* display_xml_rule_func */
+    send_fl_request_packet,			/* status_query_func */
+    send_fl_rule_request_packet,	/* rule_query_func */
+	NULL,							/* player_query_func */
+    deal_with_fl_packet,			/* packet_func */
 },
 {
     Q_UNKNOWN_TYPE,		/* id */
@@ -2795,6 +3189,8 @@ int rule_info_packet( struct qserver *server, struct q_packet *pkt, int datalen 
 int time_delta( struct timeval *later, struct timeval *past);
 char * strherror( int h_err);
 int connection_refused();
+int connection_would_block();
+int connection_reset();
 
 void add_file( char *filename);
 int add_qserver( char *arg, server_type* type, char *outfilename, char *query_arg);
@@ -2811,6 +3207,7 @@ void add_server_to_hash( struct qserver *server);
 #define CHECK_DUPLICATE_RULES 2
 #define NO_KEY_COPY 4
 #define COMBINE_VALUES 8
+#define OVERWITE_DUPLICATES 16
 
 struct player* get_player_by_number( struct qserver *server, int player_number );
 struct rule* add_rule( struct qserver *server, char *key, char *value,	int flags) ;
@@ -2870,5 +3267,8 @@ extern int show_game_port;
 #define NA_INT -32767
 #define NO_PLAYER_INFO 0xffff
 #define NO_SERVER_RULES NULL
+
+#define FORCE 1
+#define NO_FORCE 0
 
 #endif

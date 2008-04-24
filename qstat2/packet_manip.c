@@ -139,7 +139,7 @@ int combine_packets( struct qserver *server )
 
 		// Note: this is currently invalid as packet processing methods
 		// are void not int
-		if ( done || server->saved_data.data == NULL)
+		if ( done || NULL == server->saved_data.data )
 		{
 			break;
 		}
@@ -180,6 +180,7 @@ int add_packet( struct qserver *server, unsigned int pkt_id, int pkt_index, int 
 				cdata->pkt_max = pkt_max;
 			}
 		}
+		debug( 4, "calced max = %d", pkt_max );
 
 		// allocate a new packet data and prepend to the list
 		sdata = (SavedData*) calloc( 1, sizeof(SavedData) );
@@ -195,7 +196,6 @@ int add_packet( struct qserver *server, unsigned int pkt_id, int pkt_index, int 
 	if ( NULL == sdata->data )
 	{
 		fprintf( stderr, "Out of memory\n" );
-		cleanup_qserver( server, 1 );
 		return 0;
 	}
 
@@ -224,4 +224,18 @@ SavedData* get_packet_fragment( int index )
 	}
 
 	return segments[pkt_id_index][index];
+}
+
+unsigned combined_length( struct qserver *server, int pkt_id )
+{
+	SavedData *sdata = &server->saved_data;
+	unsigned len = 0;
+	for ( ; sdata != NULL; sdata = sdata->next )
+	{
+		if ( pkt_id == sdata->pkt_id )
+		{
+			len += sdata->datalen;
+		}
+	}
+	return len;
 }
